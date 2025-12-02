@@ -11,31 +11,28 @@ includelib \masm32\lib\user32.lib
 includelib \masm32\lib\kernel32.lib
 includelib \masm32\lib\gdi32.lib
 
-;==============================================================================
-; 数据段
-;==============================================================================
 .data
     AppName     db "MASM32 Breakout",0
     ClassName   db "BreakoutClass",0
     
     ; 游戏参数
-    WindowW     dd 640
-    WindowH     dd 480
+    WindowW     dd 480
+    WindowH     dd 640
     TimerID     dd 1
     TimerDelay  dd 16   ; ~60 FPS
     
     ; 球
-    BallX       dd 320
-    BallY       dd 400
-    BallSize    dd 12
+    BallX       dd 80
+    BallY       dd 320
+    BallSize    dd 24
     VelX        dd 4
-    VelY        dd -4
+    VelY        dd 4
     
     ; 挡板
-    PaddleX     dd 270
-    PaddleY     dd 440
-    PaddleW     dd 100
-    PaddleH     dd 15
+    PaddleX     dd 0
+    PaddleY     dd 270
+    PaddleW     dd 15
+    PaddleH     dd 100
     PaddleSpeed dd 20
     
     ; 砖块 (1=存在, 0=破碎)
@@ -43,13 +40,16 @@ includelib \masm32\lib\gdi32.lib
     Bricks      db 1,1,1,1,1
                 db 1,1,1,1,1
                 db 1,1,1,1,1
-    BrickRows   dd 3
-    BrickCols   dd 5
-    BrickW      dd 100
-    BrickH      dd 30
+    BrickRows   dd 5
+    BrickCols   dd 3
+    BrickW      dd 30
+    BrickH      dd 100
     BrickGap    dd 10
-    BrickOffX   dd 45
-    BrickOffY   dd 50
+    BrickOffX   dd 330
+    BrickOffY   dd 45
+
+    PauseCaption db "Game Paused", 0
+    PauseMsg db "Game is paused. Click OK to continue.", 0
 
 .data?
     hInstance   HINSTANCE ?
@@ -60,9 +60,7 @@ includelib \masm32\lib\gdi32.lib
 
 .code
 
-; 前置声明，解决 A2006 错误
 WinMain PROTO :HINSTANCE, :HINSTANCE, :LPSTR, :DWORD
-
 
 start:
     invoke GetModuleHandle, NULL
@@ -82,7 +80,7 @@ WinMain proc hInst:HINSTANCE, hPrevInst:HINSTANCE, CmdLine:LPSTR, CmdShow:DWORD
     mov wc.cbWndExtra, NULL
     push hInst
     pop wc.hInstance
-    mov wc.hbrBackground, COLOR_WINDOW+1 ; 白色背景
+    mov wc.hbrBackground, COLOR_WINDOWTEXT+1 ; 黑色背景
     mov wc.lpszMenuName, NULL
     mov wc.lpszClassName, offset ClassName
     mov wc.hIcon, NULL
@@ -128,32 +126,34 @@ UpdateGame proc
     mov BallY, eax
 
     ; --- 2. 墙壁碰撞 ---
-    ; 左墙
-    cmp BallX, 0
-    jge @F
-    neg VelX
-@@:
-    ; 右墙
-    mov eax, WindowW
-    sub eax, BallSize
-    sub eax, 20      
-    cmp BallX, eax
-    jle @F
-    neg VelX
-@@:
     ; 顶墙
     cmp BallY, 0
     jge @F
     neg VelY
 @@:
-    ; 底墙 (掉落重置)
+    ; 底墙
     mov eax, WindowH
-    sub eax, 50
+    sub eax, BallSize
+    sub eax, 30      
     cmp BallY, eax
     jle @F
-    mov BallX, 320
-    mov BallY, 300
-    mov VelY, -4
+    neg VelY
+@@:
+    ; 右墙
+    mov eax, WindowW
+    sub eax, BallSize
+    sub eax, 15      
+    cmp BallX, eax
+    jle @F
+    neg VelX
+@@:
+    ; 左墙 (掉落重置)
+    cmp BallX, 0
+    jge @F
+    mov BallX, 80
+    mov BallY, 320
+    mov VelX, 4
+
 @@:
 
     ; --- 3. 挡板碰撞 (AABB) ---
@@ -180,10 +180,10 @@ UpdateGame proc
     jg NoPaddleHit      ; 球左 > 挡板右
 
     ; 命中挡板
-    neg VelY
-    mov eax, PaddleY    ; 修正位置防止粘连
-    sub eax, BallSize
-    mov BallY, eax
+    neg VelX
+    mov eax, PaddleX    ; 修正位置防止粘连
+    add eax, PaddleW
+    mov BallX, eax
 NoPaddleHit:
 
     ; --- 4. 砖块碰撞检测 (修复版) ---
@@ -208,7 +208,7 @@ ColLoop:
     ; 检查砖块是否存在
     mov al, byte ptr [esi]
     cmp al, 0
-    je SkipBrickCheck
+    jle SkipBrickCheck
 
     ; --- AABB 碰撞检测逻辑 ---
     ; EDX = Brick Left, EBX = Brick Top
@@ -239,7 +239,7 @@ ColLoop:
 
     ; === 命中砖块 ===
     mov byte ptr [esi], 0   ; 设为0 (销毁)
-    neg VelY                ; 反弹
+    neg VelX                ; 反弹
     
     pop ebx                 ; 恢复堆栈平衡 (因为我们在NextRow之前退出了)
     ret                     ; 这一帧处理完立刻返回，防止一次穿透多块
@@ -290,25 +290,33 @@ WndProc proc hwnd:HWND, uMsg:UINT, wParam:WPARAM, lParam:LPARAM
         invoke PostQuitMessage, NULL
 
     .elseif uMsg == WM_KEYDOWN
-        .if wParam == 41h ; A
-            mov eax, PaddleX
+        .if wParam == 57h ; W
+            mov eax, PaddleY
             sub eax, PaddleSpeed
             cmp eax, 0
             jge @F
             mov eax, 0
         @@:
-            mov PaddleX, eax
-        .elseif wParam == 44h ; D
-            mov eax, PaddleX
+            mov PaddleY, eax
+        .elseif wParam == 53h ; S
+            mov eax, PaddleY
             add eax, PaddleSpeed
-            mov ecx, WindowW
-            sub ecx, PaddleW
+            mov ecx, WindowH
+            sub ecx, PaddleH
             sub ecx, 20
             cmp eax, ecx
             jle @F
             mov eax, ecx
         @@:
-            mov PaddleX, eax
+            mov PaddleY, eax
+
+        .elseif wParam == VK_ESCAPE ; VK_ESCAPE = Esc 键 (01B)
+            ; 1. 暂停动画 (停止计时器)
+            invoke KillTimer, hwnd, TimerID 
+            ; 2. 显示暂停消息框 (MB_OK是确认按钮)
+            invoke MessageBox, hwnd, ADDR PauseMsg, ADDR PauseCaption, MB_OK
+            ; 3. 恢复动画 (重新启动计时器)
+            invoke SetTimer, hwnd, TimerID, TimerDelay, NULL
         .endif
 
     .elseif uMsg == WM_TIMER
