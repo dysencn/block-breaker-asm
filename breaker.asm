@@ -6,13 +6,15 @@ include \masm32\include\windows.inc
 include \masm32\include\user32.inc
 include \masm32\include\kernel32.inc
 include \masm32\include\gdi32.inc
+include \masm32\include\masm32.inc 
 
 includelib \masm32\lib\user32.lib
 includelib \masm32\lib\kernel32.lib
 includelib \masm32\lib\gdi32.lib
+includelib \masm32\lib\masm32.lib ; 引入masm32库用于字符串转换
 
 .data
-    AppName     db "MASM32 Breakout 2P 2Balls",0
+    AppName     db "MASM32 Breakout - Multi-Life Bricks",0
     ClassName   db "BreakoutClass",0
     
     WindowW     dd 710
@@ -31,7 +33,7 @@ includelib \masm32\lib\gdi32.lib
     Vel1X       dd 4
     Vel1Y       dd 4
     
-    ; 球 2 (新增)
+    ; 球 2
     Ball2X      dd 600
     Ball2Y      dd 320
     Vel2X       dd -4
@@ -48,10 +50,9 @@ includelib \masm32\lib\gdi32.lib
     PaddleH     dd 100
     PaddleSpeed dd 20
     
-    ; 砖块
-    Bricks      db 1,1,1,1,1
-                db 1,1,1,1,1
-                db 1,1,1,1,1
+    ; 砖块配置
+    ; 注意：这里分配了空间，但数值将在 InitBricks 中被随机覆盖
+    Bricks      db 15 dup(1) 
     BrickRows   dd 5
     BrickCols   dd 3
     BrickW      dd 30
@@ -63,9 +64,12 @@ includelib \masm32\lib\gdi32.lib
     PauseCaption db "Game Paused", 0
     PauseMsg     db "Game is paused. Click OK to continue.", 0
 
-    MsgP1Win    db "Player 2 Out of Lives! Player 1 Wins!", 0
-    MsgP2Win    db "Player 1 Out of Lives! Player 2 Wins!", 0
-    GameOverCap db "Game Over", 0
+    MsgP1Win     db "Player 2 Out of Lives! Player 1 Wins!", 0
+    MsgP2Win     db "Player 1 Out of Lives! Player 2 Wins!", 0
+    GameOverCap  db "Game Over", 0
+
+    ; 随机数种子
+    RandSeed     dd 0
 
 .data?
     hInstance   HINSTANCE ?
@@ -74,14 +78,51 @@ includelib \masm32\lib\gdi32.lib
     hBrushPad2  HBRUSH ?
     hBrushBrick HBRUSH ?
     hBrushLife  HBRUSH ?
+    
+    ; 用于显示数字的临时缓冲区
+    szNumBuffer db 4 dup(?) 
 
 .code
 
 WinMain PROTO :HINSTANCE, :HINSTANCE, :LPSTR, :DWORD
 
+; --- 简单的随机数生成器 ---
+; 输入: 范围上限 (例如 5)
+; 输出: eax = 1 到 Range 之间的随机数
+GetRandomRange proc range:DWORD
+    invoke GetTickCount
+    add eax, RandSeed      ; 混入之前的种子
+    imul eax, eax, 1103515245
+    add eax, 12345
+    mov RandSeed, eax      ; 更新种子
+    xor edx, edx
+    mov ecx, range
+    div ecx                ; edx = eax % range
+    mov eax, edx
+    inc eax                ; 结果 + 1 (变为 1-5)
+    ret
+GetRandomRange endp
+
+; --- 初始化砖块生命值 ---
+InitBricks proc
+    mov esi, offset Bricks
+    mov ecx, 15 ; 总共15块砖 (5行 * 3列)
+InitLoop:
+    push ecx
+    push esi
+    invoke GetRandomRange, 5 ; 生成 1-5
+    pop esi
+    mov byte ptr [esi], al   ; 存入砖块数组
+    inc esi
+    pop ecx
+    dec ecx
+    jnz InitLoop
+    ret
+InitBricks endp
+
 CheckKeyboard proc
     ; --- P1 控制 (W/S) ---
-    invoke GetAsyncKeyState, 57h
+    invoke GetAsyncKeyState, 57h ; W
     .if eax != 0
         mov eax, Paddle1Y
         sub eax, PaddleSpeed
@@ -91,7 +132,7 @@ CheckKeyboard proc
         mov Paddle1Y, eax
     .endif
 
-    invoke GetAsyncKeyState, 53h
+    invoke GetAsyncKeyState, 53h ; S
     .if eax != 0
         mov eax, Paddle1Y
         add eax, PaddleSpeed
@@ -131,29 +172,28 @@ CheckKeyboard proc
 CheckKeyboard endp
 
 UpdateGame proc hWin:HWND
-    ; 1. 每一帧开始，先检查是否已经有人死亡 (防止重复弹窗和卡死)
+    ; 检查生命值
     .if Life1 == 0
         invoke KillTimer, hWin, TimerID
         invoke MessageBox, hWin, addr MsgP2Win, addr GameOverCap, MB_OK
         invoke PostQuitMessage, 0
-        mov Life1, -1 ; 标记为已处理，防止再次进入
+        mov Life1, -1 
         ret
     .elseif Life2 == 0
         invoke KillTimer, hWin, TimerID
         invoke MessageBox, hWin, addr MsgP1Win, addr GameOverCap, MB_OK
         invoke PostQuitMessage, 0
-        mov Life2, -1 ; 标记为已处理
+        mov Life2, -1 
         ret
     .endif
 
-    ; 如果生命值已经是负数（已处理过死亡），直接返回
     .if sdword ptr Life1 < 0 || sdword ptr Life2 < 0
         ret
     .endif
 
     invoke CheckKeyboard
 
-    ; --- 1. 更新球1位置 ---
+    ; 更新球位置
     mov eax, Ball1X
     add eax, Vel1X
     mov Ball1X, eax
@@ -161,7 +201,6 @@ UpdateGame proc hWin:HWND
     add eax, Vel1Y
     mov Ball1Y, eax
 
-    ; --- 2. 更新球2位置 ---
     mov eax, Ball2X
     add eax, Vel2X
     mov Ball2X, eax
@@ -169,7 +208,7 @@ UpdateGame proc hWin:HWND
     add eax, Vel2Y
     mov Ball2Y, eax
 
-    ; 通用边界：顶底反弹
+    ; 边界反弹
     .if sdword ptr Ball1Y < 0 || Ball1Y > 580
         neg Vel1Y
     .endif
@@ -177,34 +216,29 @@ UpdateGame proc hWin:HWND
         neg Vel2Y
     .endif
 
-    ; --- 核心逻辑：失误判定 (碰到自己这边的墙) ---
-    ; 球1是P1的球，如果Ball1X < 0，P1失误
+    ; 左右出界判定 (失误)
     .if sdword ptr Ball1X < 0
         dec Life1
         mov Ball1X, 100
         mov Vel1X, 5
     .endif
-    ; 球2是P2的球，如果Ball2X > 680，P2失误
     .if Ball2X > 680
         dec Life2
         mov Ball2X, 580
         mov Vel2X, -5
     .endif
 
-    ; 球1碰到右墙 (正常反弹)
+    ; 墙壁反弹
     .if Ball1X > 680
         neg Vel1X
     .endif
-    ; 球2碰到左墙 (正常反弹)
     .if sdword ptr Ball2X < 0
         neg Vel2X
     .endif
 
-    ; --- 核心逻辑：挡板碰撞判定 ---
-    ; 1. P1 挡板碰撞
+    ; --- 挡板碰撞判定 (P1) ---
     mov eax, Ball1X
-    .if eax < 30 ; 自己的球：反弹
-        ; (AABB 检测代码省略部分细节以节省空间，逻辑同前)
+    .if eax < 30 
         mov eax, Ball1Y
         add eax, BallSize
         .if eax >= Paddle1Y
@@ -222,7 +256,7 @@ UpdateGame proc hWin:HWND
     .endif
     
     mov eax, Ball2X
-    .if eax < 30 ; 对方的球：掉生命并反弹
+    .if eax < 30 
         mov eax, Ball2Y
         add eax, BallSize
         .if eax >= Paddle1Y
@@ -232,7 +266,7 @@ UpdateGame proc hWin:HWND
                 mov eax, Paddle1X
                 add eax, PaddleW
                 .if Ball2X <= eax
-                    dec Life1 ; 被击中！
+                    dec Life1 
                     neg Vel2X
                     mov Ball2X, eax
                 .endif
@@ -240,9 +274,9 @@ UpdateGame proc hWin:HWND
         .endif
     .endif
 
-    ; 2. P2 挡板碰撞
+    ; --- 挡板碰撞判定 (P2) ---
     mov eax, Ball1X
-    .if eax > 650 ; 对方的球：掉生命并反弹
+    .if eax > 650 
         mov eax, Ball1Y
         add eax, BallSize
         .if eax >= Paddle2Y
@@ -252,7 +286,7 @@ UpdateGame proc hWin:HWND
                 mov eax, Ball1X
                 add eax, BallSize
                 .if eax >= Paddle2X
-                    dec Life2 ; 被击中！
+                    dec Life2 
                     neg Vel1X
                     mov eax, Paddle2X
                     sub eax, BallSize
@@ -263,7 +297,7 @@ UpdateGame proc hWin:HWND
     .endif
 
     mov eax, Ball2X
-    .if eax > 650 ; 自己的球：反弹
+    .if eax > 650 
         mov eax, Ball2Y
         add eax, BallSize
         .if eax >= Paddle2Y
@@ -282,7 +316,7 @@ UpdateGame proc hWin:HWND
         .endif
     .endif
 
-    ; --- 7. 砖块碰撞检测 (球1) ---
+    ; --- 砖块碰撞检测 (球1) ---
     mov esi, offset Bricks
     mov edi, 0
     mov ebx, BrickOffY
@@ -294,8 +328,11 @@ B1_Row:
 B1_Col:
     cmp ecx, BrickCols
     jge B1_NextRow
-    cmp byte ptr [esi], 1
-    jne B1_Skip
+    
+    ; [修改1] 只要生命值 > 0 就算存在
+    cmp byte ptr [esi], 0
+    je B1_Skip
+
     ; AABB检测
     mov eax, Ball1X
     add eax, BallSize
@@ -313,10 +350,11 @@ B1_Col:
     add eax, BrickH
     cmp Ball1Y, eax
     jge B1_Skip
-    ; 撞到了
-    mov byte ptr [esi], 0
+    
+    ; [修改2] 撞到了，生命值减1，而不是直接清零
+    dec byte ptr [esi]
     neg Vel1X
-    jmp B2_Check ; 一个球每帧只撞一块砖
+    jmp B2_Check 
 B1_Skip:
     inc esi
     inc ecx
@@ -330,7 +368,7 @@ B1_NextRow:
     jmp B1_Row
 
 B2_Check:
-    ; --- 8. 砖块碰撞检测 (球2) ---
+    ; --- 砖块碰撞检测 (球2) ---
     mov esi, offset Bricks
     mov edi, 0
     mov ebx, BrickOffY
@@ -342,8 +380,11 @@ B2_Row:
 B2_Col:
     cmp ecx, BrickCols
     jge B2_NextRow
-    cmp byte ptr [esi], 1
-    jne B2_Skip
+    
+    ; [修改1] 检测生命值 > 0
+    cmp byte ptr [esi], 0
+    je B2_Skip
+
     ; AABB检测
     mov eax, Ball2X
     add eax, BallSize
@@ -361,8 +402,9 @@ B2_Col:
     add eax, BrickH
     cmp Ball2Y, eax
     jge B2_Skip
-    ; 撞到了
-    mov byte ptr [esi], 0
+    
+    ; [修改2] 撞到了，生命值减1
+    dec byte ptr [esi]
     neg Vel2X
     jmp UpdateDone
 B2_Skip:
@@ -388,6 +430,7 @@ PaintGame proc hdc:HDC, lprect:PTR RECT
     local rectClient:RECT
     local currentX:DWORD
     local currentY:DWORD
+    local rectBrick:RECT ; 用于绘制文字的矩形区域
 
     invoke CreateCompatibleDC, hdc
     mov memDC, eax
@@ -406,13 +449,13 @@ PaintGame proc hdc:HDC, lprect:PTR RECT
 
     ; 绘制生命值 (UI)
     invoke SelectObject, memDC, hBrushLife
-    ; P1 生命 (左上)
+    ; P1
     mov edi, 0
     .while edi < Life1
         mov eax, edi
         imul eax, 25
-        add eax, 20 ; X offset
-        mov ebx, 10 ; Y offset
+        add eax, 20
+        mov ebx, 10
         mov ecx, eax
         add ecx, LifeSize
         mov edx, ebx
@@ -422,7 +465,7 @@ PaintGame proc hdc:HDC, lprect:PTR RECT
         pop edi
         inc edi
     .endw
-    ; P2 生命 (右上)
+    ; P2
     mov edi, 0
     .while edi < Life2
         mov eax, 660
@@ -440,7 +483,7 @@ PaintGame proc hdc:HDC, lprect:PTR RECT
         inc edi
     .endw
 
-    ; 绘制 P1 挡板
+    ; 绘制挡板
     invoke SelectObject, memDC, hBrushPad1
     mov eax, Paddle1X
     add eax, PaddleW
@@ -448,7 +491,6 @@ PaintGame proc hdc:HDC, lprect:PTR RECT
     add ecx, PaddleH
     invoke Rectangle, memDC, Paddle1X, Paddle1Y, eax, ecx
 
-    ; 绘制 P2 挡板
     invoke SelectObject, memDC, hBrushPad2
     mov eax, Paddle2X
     add eax, PaddleW
@@ -456,23 +498,27 @@ PaintGame proc hdc:HDC, lprect:PTR RECT
     add ecx, PaddleH
     invoke Rectangle, memDC, Paddle2X, Paddle2Y, eax, ecx
 
-    ; 绘制两个球
+    ; 绘制球
     invoke SelectObject, memDC, hBrushBall
-    ; 球 1
     mov eax, Ball1X
     add eax, BallSize
     mov ecx, Ball1Y
     add ecx, BallSize
     invoke Ellipse, memDC, Ball1X, Ball1Y, eax, ecx
-    ; 球 2
+    
     mov eax, Ball2X
     add eax, BallSize
     mov ecx, Ball2Y
     add ecx, BallSize
     invoke Ellipse, memDC, Ball2X, Ball2Y, eax, ecx
 
-    ; 绘制砖块
+    ; --- 绘制砖块及文字 ---
     invoke SelectObject, memDC, hBrushBrick
+    
+    ; 设置文字属性：白色，背景透明
+    invoke SetTextColor, memDC, 00FFFFFFh 
+    invoke SetBkMode, memDC, TRANSPARENT
+
     mov esi, offset Bricks
     mov edi, 0
     mov eax, BrickOffY
@@ -486,14 +532,41 @@ PaintRow:
 PaintCol:
     cmp ecx, BrickCols
     jge PaintNext
-    cmp byte ptr [esi], 1
-    jne SkipP
+    
+    ; [修改3] 只要生命值 > 0 就绘制
+    cmp byte ptr [esi], 0
+    je SkipP
+
+    ; 1. 绘制矩形
     mov eax, currentX
     add eax, BrickW
     mov ebx, currentY
     add ebx, BrickH
     push ecx
     invoke Rectangle, memDC, currentX, currentY, eax, ebx
+    
+    ; 2. 绘制生命值数字
+    ; 设置绘制区域 rectBrick
+    mov eax, currentX
+    mov rectBrick.left, eax
+    add eax, BrickW
+    mov rectBrick.right, eax
+    
+    mov eax, currentY
+    mov rectBrick.top, eax
+    add eax, BrickH
+    mov rectBrick.bottom, eax
+
+    ; 将数字转为字符串
+    xor eax, eax
+    mov al, byte ptr [esi] ; 获取当前生命值
+    add al, '0'            ; 转换为ASCII字符 (例如 3 -> '3')
+    mov szNumBuffer[0], al
+    mov szNumBuffer[1], 0  ; 字符串结尾
+
+    ; 绘制文字于矩形中心
+    invoke DrawText, memDC, addr szNumBuffer, -1, addr rectBrick, DT_CENTER or DT_VCENTER or DT_SINGLELINE
+
     pop ecx
 SkipP:
     inc esi
@@ -522,6 +595,7 @@ PaintGame endp
 WndProc proc hwnd:HWND, uMsg:UINT, wParam:WPARAM, lParam:LPARAM
     local ps:PAINTSTRUCT
     .if uMsg == WM_CREATE
+        ; 初始化资源
         invoke CreateSolidBrush, 000000FFh ; 红球
         mov hBrushBall, eax
         invoke CreateSolidBrush, 00FF0000h ; 蓝板
@@ -530,8 +604,14 @@ WndProc proc hwnd:HWND, uMsg:UINT, wParam:WPARAM, lParam:LPARAM
         mov hBrushPad2, eax
         invoke CreateSolidBrush, 00008000h ; 绿砖
         mov hBrushBrick, eax
-        invoke CreateSolidBrush, 000000FFh ; 00RRGGBBh 格式，这里是纯红
+        invoke CreateSolidBrush, 000000FFh ; 生命指示
         mov hBrushLife, eax
+        
+        ; [新增] 初始化随机砖块生命值
+        invoke GetTickCount
+        mov RandSeed, eax ; 初始化随机种子
+        invoke InitBricks
+
         invoke SetTimer, hwnd, TimerID, TimerDelay, NULL
     .elseif uMsg == WM_TIMER
         invoke UpdateGame, hwnd
@@ -541,7 +621,7 @@ WndProc proc hwnd:HWND, uMsg:UINT, wParam:WPARAM, lParam:LPARAM
         push eax
         lea ecx, ps.rcPaint
         pop eax
-        invoke PaintGame, eax, ecx ; 不使用 addr 伪指令，手动传地址
+        invoke PaintGame, eax, ecx 
         invoke EndPaint, hwnd, addr ps
     .elseif uMsg == WM_KEYDOWN
         .if wParam == VK_ESCAPE
