@@ -11,60 +11,58 @@ includelib \masm32\lib\user32.lib
 includelib \masm32\lib\kernel32.lib
 includelib \masm32\lib\gdi32.lib
 
+;==============================================================================
+; 数据段
+;==============================================================================
 .data
-    AppName     db "MASM32 Breakout 2P",0
+    AppName     db "MASM32 Breakout",0
     ClassName   db "BreakoutClass",0
     
     ; 游戏参数
-    WindowW     dd 640          ; 窗口宽度增加，以容纳第二个玩家
-    WindowH     dd 640          ; 保持窗口高度
+    WindowW     dd 640
+    WindowH     dd 480
     TimerID     dd 1
-    TimerDelay  dd 16           ; ~60 FPS
+    TimerDelay  dd 16   ; ~60 FPS
     
     ; 球
-    BallX       dd 80
-    BallY       dd 320
-    BallSize    dd 24
+    BallX       dd 320
+    BallY       dd 400
+    BallSize    dd 12
     VelX        dd 4
-    VelY        dd 4
+    VelY        dd -4
     
-    ; 挡板 1 (左侧 - W/S 控制)
-    Paddle1X    dd 15           ; X 位置靠近左侧
-    Paddle1Y    dd 270          ; Y 初始位置
-    PaddleW     dd 15
-    PaddleH     dd 100
+    ; 挡板
+    PaddleX     dd 270
+    PaddleY     dd 440
+    PaddleW     dd 100
+    PaddleH     dd 15
     PaddleSpeed dd 20
     
-    ; 挡板 2 (右侧 - 上下方向键控制)
-    Paddle2X    dd 610          ; X 位置靠近右侧 (WindowW - PaddleW - 15)
-    Paddle2Y    dd 270          ; Y 初始位置
-    
     ; 砖块 (1=存在, 0=破碎)
+    ;简单的字节数组模拟
     Bricks      db 1,1,1,1,1
                 db 1,1,1,1,1
                 db 1,1,1,1,1
-    BrickRows   dd 5            ; 仍然是 5 行
-    BrickCols   dd 3            ; 仍然是 3 列
-    BrickW      dd 30
-    BrickH      dd 100
+    BrickRows   dd 3
+    BrickCols   dd 5
+    BrickW      dd 100
+    BrickH      dd 30
     BrickGap    dd 10
-    BrickOffX   dd 300          ; 砖块组的新 X 偏移 (位于窗口中心附近)
-    BrickOffY   dd 45
-    
-    PauseCaption db "Game Paused", 0
-    PauseMsg db "Game is paused. Click OK to continue.", 0
+    BrickOffX   dd 45
+    BrickOffY   dd 50
 
 .data?
     hInstance   HINSTANCE ?
     hBrushBall  HBRUSH ?
-    hBrushPad1  HBRUSH ?        ; Player 1 画刷
-    hBrushPad2  HBRUSH ?        ; Player 2 画刷
+    hBrushPad   HBRUSH ?
     hBrushBrick HBRUSH ?
     rect        RECT <>
 
 .code
 
+; 前置声明，解决 A2006 错误
 WinMain PROTO :HINSTANCE, :HINSTANCE, :LPSTR, :DWORD
+
 
 start:
     invoke GetModuleHandle, NULL
@@ -84,7 +82,7 @@ WinMain proc hInst:HINSTANCE, hPrevInst:HINSTANCE, CmdLine:LPSTR, CmdShow:DWORD
     mov wc.cbWndExtra, NULL
     push hInst
     pop wc.hInstance
-    mov wc.hbrBackground, COLOR_WINDOWTEXT+1 ; 黑色背景
+    mov wc.hbrBackground, COLOR_WINDOW+1 ; 白色背景
     mov wc.lpszMenuName, NULL
     mov wc.lpszClassName, offset ClassName
     mov wc.hIcon, NULL
@@ -117,7 +115,7 @@ WinMain proc hInst:HINSTANCE, hPrevInst:HINSTANCE, CmdLine:LPSTR, CmdShow:DWORD
 WinMain endp
 
 ;------------------------------------------------------------------------------
-; 游戏逻辑更新 (Player 1 & Player 2)
+; 游戏逻辑更新
 ;------------------------------------------------------------------------------
 UpdateGame proc
     ; --- 1. 更新球位置 ---
@@ -130,108 +128,72 @@ UpdateGame proc
     mov BallY, eax
 
     ; --- 2. 墙壁碰撞 ---
+    ; 左墙
+    cmp BallX, 0
+    jge @F
+    neg VelX
+@@:
+    ; 右墙
+    mov eax, WindowW
+    sub eax, BallSize
+    sub eax, 20      
+    cmp BallX, eax
+    jle @F
+    neg VelX
+@@:
     ; 顶墙
     cmp BallY, 0
     jge @F
     neg VelY
 @@:
-    ; 底墙
+    ; 底墙 (掉落重置)
     mov eax, WindowH
-    sub eax, BallSize
-    sub eax, 30      
+    sub eax, 50
     cmp BallY, eax
     jle @F
+    mov BallX, 320
+    mov BallY, 300
+    mov VelY, -4
+@@:
+
+    ; --- 3. 挡板碰撞 (AABB) ---
+    mov eax, BallY
+    add eax, BallSize
+    cmp eax, PaddleY
+    jl NoPaddleHit      ; 球底 < 挡板顶
+    
+    mov eax, BallY
+    mov ecx, PaddleY
+    add ecx, PaddleH
+    cmp eax, ecx
+    jg NoPaddleHit      ; 球顶 > 挡板底
+
+    mov eax, BallX
+    add eax, BallSize
+    cmp eax, PaddleX
+    jl NoPaddleHit      ; 球右 < 挡板左
+
+    mov eax, BallX
+    mov ecx, PaddleX
+    add ecx, PaddleW
+    cmp eax, ecx
+    jg NoPaddleHit      ; 球左 > 挡板右
+
+    ; 命中挡板
     neg VelY
-@@:
-    ; 右墙 (Player 2 目标区 - 丢球重置)
-    mov eax, WindowW
+    mov eax, PaddleY    ; 修正位置防止粘连
     sub eax, BallSize
-    sub eax, 15      
-    cmp BallX, eax
-    jle @F
-    ; Player 1 得分，球重置
-    mov BallX, 80
-    mov BallY, 320
-    mov VelX, 4
-    jmp EndChecks ; 跳过后续所有检查
-@@:
-    ; 左墙 (Player 1 目标区 - 丢球重置)
-    cmp BallX, 0
-    jge @F
-    ; Player 2 得分，球重置
-    mov BallX, 500 ; 靠近 Player 2 一侧重置
-    mov BallY, 320
-    mov VelX, -4
-    jmp EndChecks
-@@:
+    mov BallY, eax
+NoPaddleHit:
 
-    ; --- 3. 挡板 1 (左侧) 碰撞 (AABB) ---
-    ; PaddleX 是 Paddle1X
-    mov eax, BallY
-    add eax, BallSize
-    cmp eax, Paddle1Y
-    jl NoPaddle1Hit
+    ; --- 4. 砖块碰撞检测 (修复版) ---
+    ; 使用寄存器：ESI=数组指针, EDI=当前行, EBX=当前砖块Y坐标, EDX=当前砖块X坐标
     
-    mov eax, BallY
-    mov ecx, Paddle1Y
-    add ecx, PaddleH
-    cmp eax, ecx
-    jg NoPaddle1Hit
-
-    mov eax, BallX
-    add eax, BallSize
-    cmp eax, Paddle1X
-    jl NoPaddle1Hit
-
-    mov eax, BallX
-    mov ecx, Paddle1X
-    add ecx, PaddleW
-    cmp eax, ecx
-    jg NoPaddle1Hit
-
-    ; 命中 Player 1 挡板
-    neg VelX
-    mov eax, Paddle1X 
-    add eax, PaddleW
-    mov BallX, eax ; 修正位置防止粘连
-NoPaddle1Hit:
-
-    ; --- 3. 挡板 2 (右侧) 碰撞 (AABB) ---
-    mov eax, BallY
-    add eax, BallSize
-    cmp eax, Paddle2Y
-    jl NoPaddle2Hit
-    
-    mov eax, BallY
-    mov ecx, Paddle2Y
-    add ecx, PaddleH
-    cmp eax, ecx
-    jg NoPaddle2Hit
-
-    mov eax, BallX
-    add eax, BallSize
-    cmp eax, Paddle2X
-    jl NoPaddle2Hit
-
-    mov eax, BallX
-    mov ecx, Paddle2X
-    add ecx, PaddleW
-    cmp eax, ecx
-    jg NoPaddle2Hit
-
-    ; 命中 Player 2 挡板
-    neg VelX
-    mov eax, Paddle2X
-    sub eax, BallSize
-    mov BallX, eax ; 修正位置防止粘连
-NoPaddle2Hit:
-
-    ; --- 4. 砖块碰撞检测 (现在反弹 X 方向) ---
     mov esi, offset Bricks
     mov edi, 0              ; Row index
     mov ebx, BrickOffY      ; Current Row Y
 
-BrickRowLoop:
+RowLoop:
     cmp edi, BrickRows
     jge EndBrickChecks
 
@@ -246,31 +208,30 @@ ColLoop:
     ; 检查砖块是否存在
     mov al, byte ptr [esi]
     cmp al, 0
-    jle SkipBrickCheck
+    je SkipBrickCheck
 
     ; --- AABB 碰撞检测逻辑 ---
-    ; (逻辑保持不变，但现在是垂直游戏，主要反弹 VelX)
     ; EDX = Brick Left, EBX = Brick Top
     
-    ; 1. BallRight > BrickLeft ?
+    ; 1. BallRight > BrickLeft ? (BallX + Size > EDX)
     mov eax, BallX
     add eax, BallSize
     cmp eax, edx
     jle SkipBrickCheck
 
-    ; 2. BallLeft < BrickRight ?
+    ; 2. BallLeft < BrickRight ? (BallX < EDX + Width)
     mov eax, edx
     add eax, BrickW
     cmp BallX, eax
     jge SkipBrickCheck
 
-    ; 3. BallBottom > BrickTop ?
+    ; 3. BallBottom > BrickTop ? (BallY + Size > EBX)
     mov eax, BallY
     add eax, BallSize
     cmp eax, ebx
     jle SkipBrickCheck
 
-    ; 4. BallTop < BrickBottom ?
+    ; 4. BallTop < BrickBottom ? (BallY < EBX + Height)
     mov eax, ebx
     add eax, BrickH
     cmp BallY, eax
@@ -278,29 +239,26 @@ ColLoop:
 
     ; === 命中砖块 ===
     mov byte ptr [esi], 0   ; 设为0 (销毁)
+    neg VelY                ; 反弹
     
-    ; 简单的垂直游戏反弹：主要反弹 X 速度
-    neg VelX                
-    
-    pop ebx
-    jmp EndBrickChecks ; 发现碰撞后立刻跳出所有循环并结束更新
+    pop ebx                 ; 恢复堆栈平衡 (因为我们在NextRow之前退出了)
+    ret                     ; 这一帧处理完立刻返回，防止一次穿透多块
 
 SkipBrickCheck:
-    inc esi
-    inc ecx
-    add edx, BrickW
-    add edx, BrickGap
+    inc esi                 ; 数组指针+1
+    inc ecx                 ; Col+1
+    add edx, BrickW         ; X += Width
+    add edx, BrickGap       ; X += Gap
     jmp ColLoop
 
 NextRow:
-    pop ebx
-    inc edi
-    add ebx, BrickH
-    add ebx, BrickGap
-    jmp BrickRowLoop
+    pop ebx                 ; 恢复行的Y坐标
+    inc edi                 ; Row+1
+    add ebx, BrickH         ; Y += Height
+    add ebx, BrickGap       ; Y += Gap
+    jmp RowLoop
 
 EndBrickChecks:
-EndChecks: ; 统一的结束点
     ret
 UpdateGame endp
 
@@ -311,105 +269,70 @@ WndProc proc hwnd:HWND, uMsg:UINT, wParam:WPARAM, lParam:LPARAM
     local ps:PAINTSTRUCT
     local hdc:HDC
     local hOldBrush:HBRUSH
+    ; 定义局部变量用于绘图循环
     local currentX:DWORD
     local currentY:DWORD
     
     .if uMsg == WM_CREATE
         invoke CreateSolidBrush, 000000FFh ; 红球
         mov hBrushBall, eax
-        invoke CreateSolidBrush, 00FF0000h ; 蓝板 (P1)
-        mov hBrushPad1, eax
-        invoke CreateSolidBrush, 0000FFFFh ; 黄板 (P2)
-        mov hBrushPad2, eax
+        invoke CreateSolidBrush, 00FF0000h ; 蓝板
+        mov hBrushPad, eax
         invoke CreateSolidBrush, 00008000h ; 绿砖
         mov hBrushBrick, eax
         invoke SetTimer, hwnd, TimerID, TimerDelay, NULL
 
     .elseif uMsg == WM_DESTROY
         invoke DeleteObject, hBrushBall
-        invoke DeleteObject, hBrushPad1
-        invoke DeleteObject, hBrushPad2
+        invoke DeleteObject, hBrushPad
         invoke DeleteObject, hBrushBrick
         invoke KillTimer, hwnd, TimerID
         invoke PostQuitMessage, NULL
 
     .elseif uMsg == WM_KEYDOWN
-        ; --- P1 键盘控制 (W/S) ---
-        .if wParam == 57h ; W
-            mov eax, Paddle1Y
+        .if wParam == 41h ; A
+            mov eax, PaddleX
             sub eax, PaddleSpeed
             cmp eax, 0
             jge @F
             mov eax, 0
         @@:
-            mov Paddle1Y, eax
-        .elseif wParam == 53h ; S
-            mov eax, Paddle1Y
+            mov PaddleX, eax
+        .elseif wParam == 44h ; D
+            mov eax, PaddleX
             add eax, PaddleSpeed
-            mov ecx, WindowH
-            sub ecx, PaddleH
+            mov ecx, WindowW
+            sub ecx, PaddleW
             sub ecx, 20
             cmp eax, ecx
             jle @F
             mov eax, ecx
         @@:
-            mov Paddle1Y, eax
-
-        ; --- P2 键盘控制 (上下方向键) ---
-        .elseif wParam == VK_UP
-            mov eax, Paddle2Y
-            sub eax, PaddleSpeed
-            cmp eax, 0
-            jge @F
-            mov eax, 0
-        @@:
-            mov Paddle2Y, eax
-        .elseif wParam == VK_DOWN
-            mov eax, Paddle2Y
-            add eax, PaddleSpeed
-            mov ecx, WindowH
-            sub ecx, PaddleH
-            sub ecx, 20
-            cmp eax, ecx
-            jle @F
-            mov eax, ecx
-        @@:
-            mov Paddle2Y, eax
-
-        .elseif wParam == VK_ESCAPE
-            invoke KillTimer, hwnd, TimerID
-            invoke MessageBox, hwnd, ADDR PauseMsg, ADDR PauseCaption, MB_OK
-            invoke SetTimer, hwnd, TimerID, TimerDelay, NULL
+            mov PaddleX, eax
         .endif
 
     .elseif uMsg == WM_TIMER
         invoke UpdateGame
-        invoke InvalidateRect, hwnd, NULL, TRUE
-        
+        invoke InvalidateRect, hwnd, NULL, TRUE 
+
     .elseif uMsg == WM_PAINT
         invoke BeginPaint, hwnd, addr ps
         mov hdc, eax
 
-        ; 1. 绘制 P1 挡板 (蓝色)
-        invoke SelectObject, hdc, hBrushPad1
+        ; 1. 绘制挡板
+        invoke SelectObject, hdc, hBrushPad
         mov hOldBrush, eax
         
-        mov eax, Paddle1X
-        add eax, PaddleW
-        mov ecx, Paddle1Y
-        add ecx, PaddleH
-        invoke Rectangle, hdc, Paddle1X, Paddle1Y, eax, ecx
-
-        ; 2. 绘制 P2 挡板 (黄色)
-        invoke SelectObject, hdc, hBrushPad2
+        ; 计算挡板右下角坐标
+        mov eax, PaddleX
+        add eax, PaddleW    ; EAX = Paddle Right X
+        mov ecx, PaddleY
+        add ecx, PaddleH    ; ECX = Paddle Bottom Y
         
-        mov eax, Paddle2X
-        add eax, PaddleW
-        mov ecx, Paddle2Y
-        add ecx, PaddleH
-        invoke Rectangle, hdc, Paddle2X, Paddle2Y, eax, ecx
+        ; 调用 Rectangle API: (HDC, Left, Top, Right, Bottom)
+        invoke Rectangle, hdc, PaddleX, PaddleY, eax, ecx
 
-        ; 3. 绘制球 (红色)
+        ; 2. 绘制球
         invoke SelectObject, hdc, hBrushBall
         mov eax, BallX
         add eax, BallSize
@@ -417,9 +340,10 @@ WndProc proc hwnd:HWND, uMsg:UINT, wParam:WPARAM, lParam:LPARAM
         add ecx, BallSize
         invoke Ellipse, hdc, BallX, BallY, eax, ecx
 
-        ; 4. 绘制砖块 (绿色)
+        ; 3. 绘制砖块 (修复版: 循环绘制)
         invoke SelectObject, hdc, hBrushBrick
         
+        ; 保存寄存器 (Windows回调约定)
         push ebx
         push esi
         push edi
@@ -448,20 +372,22 @@ PaintColLoop:
         cmp al, 0
         je PaintSkip
 
-        ; 绘制矩形
+        ; 绘制矩形 (currentX, currentY, currentX+W, currentY+H)
         mov eax, currentX
         add eax, BrickW
         mov ebx, currentY
         add ebx, BrickH
         
-        push ecx
+        ; 保存循环计数器 ECX，因为Invoke可能会修改它
+        push ecx 
         invoke Rectangle, hdc, currentX, currentY, eax, ebx
         pop ecx
 
 PaintSkip:
-        inc esi
-        inc ecx
+        inc esi                 ; 数组+1
+        inc ecx                 ; Col+1
         
+        ; Update X
         mov eax, currentX
         add eax, BrickW
         add eax, BrickGap
@@ -469,8 +395,8 @@ PaintSkip:
         jmp PaintColLoop
 
 PaintNextRow:
-        inc edi
-        
+        inc edi                 ; Row+1
+        ; Update Y
         mov eax, currentY
         add eax, BrickH
         add eax, BrickGap
