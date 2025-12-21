@@ -14,7 +14,7 @@ includelib \masm32\lib\gdi32.lib
 includelib \masm32\lib\masm32.lib
 
 .data
-    AppName     db "MASM32 Breakout",0
+    AppName     db "Breakout",0
     ClassName   db "BreakoutClass",0
     
     WindowW     dd 710
@@ -96,6 +96,9 @@ includelib \masm32\lib\masm32.lib
                 dd 00800080h ; 3 紫色
                 dd 00E6D8ADh ; 4 浅蓝色
     
+
+    StartCaption db "Game Ready", 0
+    StartMsg     db "Press OK to Start", 0
     PauseCaption db "Game Paused", 0
     PauseMsg     db "Game is paused. Click OK to continue.", 0
     MsgP1Win     db "Player 2 Out of Lives! Player 1 Wins!", 0
@@ -166,7 +169,7 @@ SpawnEffect proc x:DWORD, y:DWORD, lpString:DWORD, textColor:DWORD
     push eax
     push ecx
     mov ecx, 0
-@@:
+    @@:
     .if EffectActive[ecx] == 0
         mov EffectActive[ecx], 1
         mov eax, x
@@ -185,7 +188,7 @@ SpawnEffect proc x:DWORD, y:DWORD, lpString:DWORD, textColor:DWORD
     inc ecx
     cmp ecx, MAX_EFFECTS
     jl @b
-@@:
+    @@:
     pop ecx
     pop eax
     ret
@@ -328,7 +331,7 @@ FreezeBall endp
 ; --- 融化：场上所有 冰(4) 变为 水(1) ---
 MeltReaction proc
     mov ecx, 0
-@@:
+    @@:
     .if BrickColors[ecx] == 4 ; 冰
         mov BrickColors[ecx], 1 ; 变水
     .endif
@@ -593,22 +596,22 @@ InitGameData proc
     mov esi, offset Bricks
     mov edi, offset BrickColors
     mov ecx, 15 
-InitLoop:
-    push ecx
-    push edi
-    push esi
-    invoke GetRandomIdx, 5
-    inc eax ; 随机生命 1-5
-    pop esi
-    mov byte ptr [esi], al
-    inc esi
-    invoke GetRandomIdx, 5
-    pop edi
-    mov byte ptr [edi], al
-    inc edi
-    pop ecx
-    dec ecx
-    jnz InitLoop
+    InitLoop:
+        push ecx
+        push edi
+        push esi
+        invoke GetRandomIdx, 5
+        inc eax ; 随机生命 1-5
+        pop esi
+        mov byte ptr [esi], al
+        inc esi
+        invoke GetRandomIdx, 5
+        pop edi
+        mov byte ptr [edi], al
+        inc edi
+        pop ecx
+        dec ecx
+        jnz InitLoop
 
     invoke GetRandomIdx, 5
     mov Ball1Color, eax
@@ -761,33 +764,33 @@ UpdateGame proc hwnd:HWND
     mov esi, offset Bricks
     mov edi, 0
     mov ebx, BrickOffY
-B1_Row:
-    cmp edi, BrickRows
-    jge SkipBall1Pos
-    mov ecx, 0
-    mov edx, BrickOffX
-B1_Col:
-    cmp ecx, BrickCols
-    jge B1_NextRow
-    cmp byte ptr [esi], 0
-    je B1_Skip
-    ; AABB
-    mov eax, Ball1X
-    add eax, BallSize
-    cmp eax, edx
-    jle B1_Skip
-    mov eax, edx
-    add eax, BrickW
-    cmp Ball1X, eax
-    jge B1_Skip
-    mov eax, Ball1Y
-    add eax, BallSize
-    cmp eax, ebx
-    jle B1_Skip
-    mov eax, ebx
-    add eax, BrickH
-    cmp Ball1Y, eax
-    jge B1_Skip
+    B1_Row:
+        cmp edi, BrickRows
+        jge SkipBall1Pos
+        mov ecx, 0
+        mov edx, BrickOffX
+    B1_Col:
+        cmp ecx, BrickCols
+        jge B1_NextRow
+        cmp byte ptr [esi], 0
+        je B1_Skip
+        ; AABB
+        mov eax, Ball1X
+        add eax, BallSize
+        cmp eax, edx
+        jle B1_Skip
+        mov eax, edx
+        add eax, BrickW
+        cmp Ball1X, eax
+        jge B1_Skip
+        mov eax, Ball1Y
+        add eax, BallSize
+        cmp eax, ebx
+        jle B1_Skip
+        mov eax, ebx
+        add eax, BrickH
+        cmp Ball1Y, eax
+        jge B1_Skip
 
     mov CurrentBrickRow, edi    ; 保存行索引 (寄存器 edi)
     mov CurrentBrickCol, ecx    ; 保存列索引 (寄存器 ecx)
@@ -816,17 +819,17 @@ B1_Col:
     invoke TriggerReaction, 1
 
     jmp SkipBall1Pos
-B1_Skip:
-    inc esi
-    inc ecx
-    add edx, BrickW
-    add edx, BrickGap
-    jmp B1_Col
-B1_NextRow:
-    inc edi
-    add ebx, BrickH
-    add ebx, BrickGap
-    jmp B1_Row
+    B1_Skip:
+        inc esi
+        inc ecx
+        add edx, BrickW
+        add edx, BrickGap
+        jmp B1_Col
+    B1_NextRow:
+        inc edi
+        add ebx, BrickH
+        add ebx, BrickGap
+        jmp B1_Row
 
     SkipBall1Pos:
 
@@ -906,36 +909,36 @@ B1_NextRow:
     mov esi, offset Bricks
     mov edi, 0
     mov ebx, BrickOffY
-B2_Row:
-    cmp edi, BrickRows
-    jge UpdateDone
-    mov ecx, 0
-    mov edx, BrickOffX
-B2_Col:
-    cmp ecx, BrickCols
-    jge B2_NextRow
-    
-    ; [修改1] 检测生命值 > 0
-    cmp byte ptr [esi], 0
-    je B2_Skip
+    B2_Row:
+        cmp edi, BrickRows
+        jge UpdateDone
+        mov ecx, 0
+        mov edx, BrickOffX
+    B2_Col:
+        cmp ecx, BrickCols
+        jge B2_NextRow
+        
+        ; [修改1] 检测生命值 > 0
+        cmp byte ptr [esi], 0
+        je B2_Skip
 
-    ; AABB检测
-    mov eax, Ball2X
-    add eax, BallSize
-    cmp eax, edx
-    jle B2_Skip
-    mov eax, edx
-    add eax, BrickW
-    cmp Ball2X, eax
-    jge B2_Skip
-    mov eax, Ball2Y
-    add eax, BallSize
-    cmp eax, ebx
-    jle B2_Skip
-    mov eax, ebx
-    add eax, BrickH
-    cmp Ball2Y, eax
-    jge B2_Skip
+        ; AABB检测
+        mov eax, Ball2X
+        add eax, BallSize
+        cmp eax, edx
+        jle B2_Skip
+        mov eax, edx
+        add eax, BrickW
+        cmp Ball2X, eax
+        jge B2_Skip
+        mov eax, Ball2Y
+        add eax, BallSize
+        cmp eax, ebx
+        jle B2_Skip
+        mov eax, ebx
+        add eax, BrickH
+        cmp Ball2Y, eax
+        jge B2_Skip
 
     mov CurrentBrickRow, edi    ; 保存行索引 (寄存器 edi)
     mov CurrentBrickCol, ecx    ; 保存列索引 (寄存器 ecx)
@@ -961,23 +964,21 @@ B2_Col:
 
     neg Vel2X
     @@:
-    
-    dec byte ptr [esi]
 
     invoke TriggerReaction, 2
 
     jmp UpdateDone
-B2_Skip:
-    inc esi
-    inc ecx
-    add edx, BrickW
-    add edx, BrickGap
-    jmp B2_Col
-B2_NextRow:
-    inc edi
-    add ebx, BrickH
-    add ebx, BrickGap
-    jmp B2_Row
+    B2_Skip:
+        inc esi
+        inc ecx
+        add edx, BrickW
+        add edx, BrickGap
+        jmp B2_Col
+    B2_NextRow:
+        inc edi
+        add ebx, BrickH
+        add ebx, BrickGap
+        jmp B2_Row
 
 SkipBall2Pos:
 
@@ -1004,6 +1005,7 @@ PaintGame proc hdc:HDC, lprect:PTR RECT
     local memDC:HDC
     local hBitmap:HBITMAP
     local hOld:HBITMAP
+    local hOldFont:HFONT
     local rectClient:RECT
     local currentX:DWORD
     local currentY:DWORD
@@ -1017,6 +1019,10 @@ PaintGame proc hdc:HDC, lprect:PTR RECT
     mov hBitmap, eax
     invoke SelectObject, memDC, hBitmap
     mov hOld, eax
+
+    ; --- 在这里把你的特效字体选进去 ---
+    invoke SelectObject, memDC, hFontEffect
+    mov hOldFont, eax       ; <--- 2. 记住系统原本的字体
 
     ; 背景
     invoke GetStockObject, BLACK_BRUSH
@@ -1176,35 +1182,35 @@ PaintGame proc hdc:HDC, lprect:PTR RECT
 
     ; --- 绘制飘字特效 ---
     invoke SetBkMode, memDC, TRANSPARENT ; 确保文字背景不会遮挡砖块
-    invoke SelectObject, memDC, hFontEffect
 
     mov edi, 0
-DrawEffLoop:
-    .if EffectActive[edi] != 0
+    DrawEffLoop:
+        .if EffectActive[edi] != 0
 
-        ;设置当前特效专属的文字颜色
-        mov eax, EffectColors[edi*4]
-        invoke SetTextColor, memDC, eax
-    
-        mov eax, EffectX[edi*4]
-        mov rectEff.left, eax
-        add eax, 50
-        mov rectEff.right, eax
-        mov eax, EffectY[edi*4]
-        mov rectEff.top, eax
-        add eax, 30
-        mov rectEff.bottom, eax
-
-        ; 3. 使用保存在数组中的字符串指针进行绘制
-        mov edx, EffectStrings[edi*4]
-        invoke DrawText, memDC, edx, -1, addr rectEff, DT_CENTER or DT_NOCLIP
+            ;设置当前特效专属的文字颜色
+            mov eax, EffectColors[edi*4]
+            invoke SetTextColor, memDC, eax
         
-    .endif
-    inc edi
-    cmp edi, MAX_EFFECTS
+            mov eax, EffectX[edi*4]
+            mov rectEff.left, eax
+            add eax, 50
+            mov rectEff.right, eax
+            mov eax, EffectY[edi*4]
+            mov rectEff.top, eax
+            add eax, 30
+            mov rectEff.bottom, eax
+
+            ; 3. 使用保存在数组中的字符串指针进行绘制
+            mov edx, EffectStrings[edi*4]
+            invoke DrawText, memDC, edx, -1, addr rectEff, DT_CENTER or DT_NOCLIP
+            
+        .endif
+        inc edi
+        cmp edi, MAX_EFFECTS
     jl DrawEffLoop
 
     invoke BitBlt, hdc, 0, 0, 710, 640, memDC, 0, 0, SRCCOPY
+    invoke SelectObject, memDC, hOldFont
     invoke SelectObject, memDC, hOld
     invoke DeleteObject, hBitmap
     invoke DeleteDC, memDC
@@ -1216,16 +1222,16 @@ WndProc proc hwnd:HWND, uMsg:UINT, wParam:WPARAM, lParam:LPARAM
     local hdc:HDC
     .if uMsg == WM_CREATE
         mov ecx, 0
-    CreateBrushLoop:
-        cmp ecx, 5
-        jge CreateBrushDone
-        push ecx
-        invoke CreateSolidBrush, ColorValues[ecx*4]
-        pop ecx
-        mov hColorBrushes[ecx*4], eax
-        inc ecx
-        jmp CreateBrushLoop
-    CreateBrushDone:
+        CreateBrushLoop:
+            cmp ecx, 5
+            jge CreateBrushDone
+            push ecx
+            invoke CreateSolidBrush, ColorValues[ecx*4]
+            pop ecx
+            mov hColorBrushes[ecx*4], eax
+            inc ecx
+            jmp CreateBrushLoop
+        CreateBrushDone:
 
         ; --- 修正：为生命值创建固定的红色画刷 ---
         invoke CreateSolidBrush, 000000FFh ; 纯红色 (RGB: 255, 0, 0)
@@ -1234,12 +1240,23 @@ WndProc proc hwnd:HWND, uMsg:UINT, wParam:WPARAM, lParam:LPARAM
         invoke GetTickCount
         mov RandSeed, eax
         invoke InitGameData
-        invoke SetTimer, hwnd, TimerID, TimerDelay, NULL
 
         invoke CreateFont, 32, 0, 0, 0, FW_BOLD, \
                            0, 0, 0, DEFAULT_CHARSET, \
                            0, 0, 0, 0, NULL
         mov hFontEffect, eax
+
+        ; --- 2. 强制立即显示并绘制 ---
+        ; 此时窗口还在内存里，我们要把它推向屏幕
+        invoke ShowWindow, hwnd, SW_SHOWNORMAL 
+        invoke UpdateWindow, hwnd
+
+        ; --- 3. 弹出开始提示框 (关键点) ---
+        ; 这一步会阻塞程序，直到用户关闭对话框
+        invoke MessageBox, hwnd, addr StartMsg, addr StartCaption, MB_OK or MB_ICONINFORMATION
+
+        ; --- 4. 只有点击确认后，才开启计时器开始游戏 ---
+        invoke SetTimer, hwnd, TimerID, TimerDelay, NULL
 
     .elseif uMsg == WM_TIMER
         invoke UpdateGame, hwnd
