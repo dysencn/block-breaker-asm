@@ -115,7 +115,23 @@ includelib \masm32\lib\masm32.lib
 
     ; --- 预设常量 ---
     ColorYellow    dd 0000FFFFh          ; 黄色 (BGR)
+    ColorRed       dd 000000FFh          ; 红色 (BGR: 00, 00, FF)
+
+    ; --- 玩家飘字固定位置 (X, Y) ---
+    P1_EffectX     dd 40                ; 靠近左侧 P1 生命值处
+    P1_EffectY     dd 50                ; 生命值图标下方一点
+    
+    P2_EffectX     dd 640               ; 靠近右侧 P2 生命值处
+    P2_EffectY     dd 50
+
     TxtMinusOne    db "-1", 0
+    TxtSwirl           db "扩散", 0
+    TxtEvaporate       db "蒸发", 0
+    TxtFreeze          db "冻结", 0
+    TxtElectroCharged  db "感电", 0
+    TxtMelt            db "融化", 0
+    TxtOverloaded      db "超载", 0
+    TxtSuperConduct    db "超导", 0
 
     msgBuf db 64 dup(0)
 
@@ -123,7 +139,9 @@ includelib \masm32\lib\masm32.lib
     hInstance     HINSTANCE ?
     hColorBrushes dd 5 dup(?) 
     hBrushLife    HBRUSH ?    ; 专门用于固定红色的生命值点
-    szNumBuffer   db 4 dup(?) 
+    szNumBuffer   db 4 dup(?)
+
+    hFontEffect    dd ?
 
 .code
 
@@ -320,21 +338,6 @@ MeltReaction proc
     ret
 MeltReaction endp
 
-;感电
-ElectroCharged proc
-    mov ecx, 0
-@@:
-    mov al, BrickColors[ecx]
-    .if al == 1 ; 水元素
-        .if Bricks[ecx] > 0
-            dec Bricks[ecx]
-        .endif
-    .endif
-    inc ecx
-    cmp ecx, 15
-    jl @b
-    ret
-ElectroCharged endp
 
 ; --- 超导：传送到对方球的初始位置 ---
 SuperConduct proc bIdx:DWORD
@@ -387,6 +390,41 @@ Overloaded proc cRow:DWORD, cCol:DWORD
     ret
 Overloaded endp
 
+; --- 感电：全场水元素(1)扣血 ---
+ElectroCharged proc
+    local row:DWORD
+    local col:DWORD
+    local idx:DWORD
+
+    mov idx, 0
+    .while idx < 15  ; 假设总共 15 块砖
+        ; 1. 检查颜色是否为水 (1)
+        mov esi, offset BrickColors
+        add esi, idx
+        movzx eax, byte ptr [esi]
+        
+        .if eax == 1
+            ; 2. 计算行列号以便调用 DamageAndEffect
+            ; Row = idx / 3, Col = idx % 3
+            mov eax, idx
+            xor edx, edx
+            mov ecx, 3
+            div ecx         ; eax = 商(Row), edx = 余数(Col)
+            
+            mov row, eax
+            mov col, edx
+            
+            ; 3. 触发扣血和特效
+            ; 注意：DamageAndEffect 会检查血量，如果已经是0则跳过
+            invoke DamageAndEffect, row, col
+        .endif
+        
+        inc idx
+    .endw
+    ret
+ElectroCharged endp
+
+
 ; --- 反应核心：只接收球的索引(1或2) ---
 ; 依赖全局变量：CurrentBrickRow, CurrentBrickCol
 TriggerReaction proc ballIdx:DWORD
@@ -395,6 +433,9 @@ TriggerReaction proc ballIdx:DWORD
     local tColor:DWORD  ; 砖块颜色 (Target Color)
     local row:DWORD
     local col:DWORD
+    local ballX:DWORD  ; 临时存放球坐标
+    local ballY:DWORD
+    local realBallColor:DWORD
 
     ; 保护寄存器
     push ebx
@@ -408,7 +449,6 @@ TriggerReaction proc ballIdx:DWORD
     mov col, eax
 
     ; 2. 计算一维索引 Index = Row * 3 + Col
-    ; (注意：这里硬编码了列数3，建议以后用变量 BrickCols 替代)
     mov eax, row
     imul eax, BrickCols
     add eax, col
@@ -420,13 +460,26 @@ TriggerReaction proc ballIdx:DWORD
     movzx ebx, byte ptr [esi]
     mov tColor, ebx
 
-    ; 4. 获取球颜色
+    ; --- 获取当前球的信息 ---
     .if ballIdx == 1
         mov eax, Ball1Color
+        mov bColor, eax
+        mov eax, Ball1X
+        mov ballX, eax
+        mov eax, Ball1Y
+        mov ballY, eax
     .else
         mov eax, Ball2Color
+        mov bColor, eax
+        mov eax, Ball2X
+        mov ballX, eax
+        mov eax, Ball2Y
+        mov ballY, eax
     .endif
-    mov bColor, eax
+
+    mov eax, bColor
+    mov eax, ColorValues[eax*4]
+    mov realBallColor, eax
 
     ; --- 5. 固定行为：先扣血并飘字 ---
     ; 无论什么属性，先调用这个通用扣血函数
@@ -441,6 +494,7 @@ TriggerReaction proc ballIdx:DWORD
 
     ; --- 7. 处理【风】元素 (扩散) ---
     .if bColor == 2 || tColor == 2
+        invoke SpawnEffect, ballX, ballY, addr TxtSwirl, realBallColor
         .if bColor == 2
             ; 球是风：把砖块的颜色(tColor)扩散给周围
             invoke HandleSwirl, row, col, tColor
@@ -463,6 +517,7 @@ TriggerReaction proc ballIdx:DWORD
 
     ; [水(1) + 火(0)] -> 蒸发
     .if eax == 0 && ebx == 1
+        invoke SpawnEffect, ballX, ballY, addr TxtEvaporate, realBallColor
         ; 规则：砖块直接消失 (覆盖掉前面的-1，强制归零)
         mov esi, offset Bricks
         add esi, brickIdx
@@ -473,23 +528,33 @@ TriggerReaction proc ballIdx:DWORD
     
     ; [水(1) + 冰(4)] -> 冻结
     .elseif eax == 1 && ebx == 4
+        invoke SpawnEffect, ballX, ballY, addr TxtFreeze, realBallColor
         ; 规则：球停2秒
         invoke FreezeBall, ballIdx
 
     ; [水(1) + 雷(3)] -> 感电
     .elseif eax == 1 && ebx == 3
+        invoke SpawnEffect, ballX, ballY, addr TxtElectroCharged, realBallColor
         ; 规则：全场水元素扣血
         invoke ElectroCharged
 
     ; [火(0) + 冰(4)] -> 融化
     .elseif eax == 0 && ebx == 4
+        invoke SpawnEffect, ballX, ballY, addr TxtMelt, realBallColor
         ; 规则：全场冰变水
         invoke MeltReaction
 
     ; [火(0) + 雷(3)] -> 超载
     .elseif eax == 0 && ebx == 3
+        invoke SpawnEffect, ballX, ballY, addr TxtOverloaded, realBallColor
         ; 规则：炸周围
         invoke Overloaded, row, col
+
+    ; [雷(3) + 冰(4)] -> 超导
+    .elseif eax == 3 && ebx == 4
+        ; 规则：传送到对方球的初始位置
+        invoke SpawnEffect, ballX, ballY, addr TxtSuperConduct, realBallColor
+        invoke SuperConduct, ballIdx
     .endif
 
 DoneReaction:
@@ -498,6 +563,31 @@ DoneReaction:
     pop ebx
     ret
 TriggerReaction endp
+
+
+; ---------------------------------------------------------
+; 函数: DecreaseLifeWithEffect
+; 参数: playerNum (1 或 2)
+; ---------------------------------------------------------
+DecreaseLifeWithEffect proc playerNum:DWORD
+    .if playerNum == 1
+        ; 1. 逻辑扣血
+        .if Life1 > 0
+            dec Life1
+            ; 2. 在 P1 固定位置生成红色 "-1"
+            invoke SpawnEffect, P1_EffectX, P1_EffectY, addr TxtMinusOne, ColorRed
+        .endif
+        
+    .elseif playerNum == 2
+        ; 1. 逻辑扣血
+        .if Life2 > 0
+            dec Life2
+            ; 2. 在 P2 固定位置生成红色 "-1"
+            invoke SpawnEffect, P2_EffectX, P2_EffectY, addr TxtMinusOne, ColorRed
+        .endif
+    .endif
+    ret
+DecreaseLifeWithEffect endp
 
 InitGameData proc
     mov esi, offset Bricks
@@ -652,7 +742,7 @@ UpdateGame proc hwnd:HWND
         mov ecx, edx
         add ecx, PaddleH
         .if Ball1Y >= sdword ptr edx && Ball1Y <= ecx
-            dec Life2
+            invoke DecreaseLifeWithEffect, 2
             neg Vel1X
             mov eax, Paddle2X
             sub eax, BallSize
@@ -662,7 +752,7 @@ UpdateGame proc hwnd:HWND
 
     ;球1出界判定 (失误)
     .if sdword ptr Ball1X < 0
-        dec Life1
+        invoke DecreaseLifeWithEffect, 1
         mov Ball1X, 100
         mov Vel1X, 5
     .endif
@@ -776,7 +866,7 @@ B1_NextRow:
         mov ecx, edx
         add ecx, PaddleH
         .if Ball2Y >= edx && Ball2Y <= ecx
-            dec Life1
+            invoke DecreaseLifeWithEffect, 1
             neg Vel2X
             mov eax, Paddle1X
             add eax, PaddleW
@@ -806,7 +896,7 @@ B1_NextRow:
 
     ;球2出界判定 (失误)
     .if Ball2X > 680
-        dec Life2
+        invoke DecreaseLifeWithEffect, 2
         mov Ball2X, 580
         mov Vel2X, -5
     .endif
@@ -1086,7 +1176,8 @@ PaintGame proc hdc:HDC, lprect:PTR RECT
 
     ; --- 绘制飘字特效 ---
     invoke SetBkMode, memDC, TRANSPARENT ; 确保文字背景不会遮挡砖块
-    invoke SetTextColor, memDC, 0000FFFFh ; 黄色文字，醒目一点
+    invoke SelectObject, memDC, hFontEffect
+
     mov edi, 0
 DrawEffLoop:
     .if EffectActive[edi] != 0
@@ -1097,16 +1188,16 @@ DrawEffLoop:
     
         mov eax, EffectX[edi*4]
         mov rectEff.left, eax
-        add eax, 40
+        add eax, 50
         mov rectEff.right, eax
         mov eax, EffectY[edi*4]
         mov rectEff.top, eax
-        add eax, 20
+        add eax, 30
         mov rectEff.bottom, eax
 
         ; 3. 使用保存在数组中的字符串指针进行绘制
         mov edx, EffectStrings[edi*4]
-        invoke DrawText, memDC, edx, -1, addr rectEff, DT_CENTER
+        invoke DrawText, memDC, edx, -1, addr rectEff, DT_CENTER or DT_NOCLIP
         
     .endif
     inc edi
@@ -1144,6 +1235,11 @@ WndProc proc hwnd:HWND, uMsg:UINT, wParam:WPARAM, lParam:LPARAM
         mov RandSeed, eax
         invoke InitGameData
         invoke SetTimer, hwnd, TimerID, TimerDelay, NULL
+
+        invoke CreateFont, 32, 0, 0, 0, FW_BOLD, \
+                           0, 0, 0, DEFAULT_CHARSET, \
+                           0, 0, 0, 0, NULL
+        mov hFontEffect, eax
 
     .elseif uMsg == WM_TIMER
         invoke UpdateGame, hwnd
@@ -1196,7 +1292,7 @@ WinMain proc hInst:HINSTANCE, hPrevInst:HINSTANCE, CmdLine:LPSTR, CmdShow:DWORD
     invoke RegisterClassEx, addr wc
     invoke CreateWindowEx, NULL, addr ClassName, addr AppName,
            WS_OVERLAPPED or WS_CAPTION or WS_SYSMENU or WS_MINIMIZEBOX,
-           CW_USEDEFAULT, CW_USEDEFAULT, 710, 640, NULL, NULL, hInst, NULL
+           CW_USEDEFAULT, CW_USEDEFAULT, WindowW, WindowH, NULL, NULL, hInst, NULL
     mov hwnd, eax
     invoke ShowWindow, hwnd, CmdShow
     .while TRUE

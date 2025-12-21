@@ -1,42 +1,12 @@
-jge B1_Skip
-
-    mov CurrentBrickRow, edi    ; 保存行索引 (寄存器 edi)
-    mov CurrentBrickCol, ecx    ; 保存列索引 (寄存器 ecx)
-
-    ;确认判断碰撞
-    mov eax, Ball1X
-    add eax, BallHalfSize
-
-    ; 2. 检查中心 X 是否在砖块的左右边界之间 [edx, edx + BrickW]
-    .if eax >= edx              ; 中心点在左边界右侧
-        push eax                
-        mov eax, edx
-        add eax, BrickW         ; 计算右边缘
-        pop ecx                 ; 将球中心点弹出到 ecx 进行比较
-        
-        .if ecx <= eax          ; 中心点在右边界左侧
-            ; --- 判定为：撞击了水平面 (顶边或底边) ---
-            neg Vel1Y           ; 反转垂直速度
-            jmp @f              ; 跳过 X 反转
-        .endif
+; --- 融化：场上所有 冰(4) 变为 水(1) ---
+MeltReaction proc
+    mov ecx, 0
+@@:
+    .if BrickColors[ecx] == 4 ; 冰
+        mov BrickColors[ecx], 1 ; 变水
     .endif
-
-    neg Vel1X
-    @@:
-
-    dec byte ptr [esi]
-    
-    ; --- 新增：触发特效 ---
-    push edx    ; edx 是当前砖块的 X
-    push ebx    ; ebx 是当前砖块的 Y
-    invoke SpawnEffect, edx, ebx, addr TxtMinusOne, ColorYellow
-    pop ebx
-    pop edx
-
-    jmp SkipBall1Pos
-B1_Skip:
-    inc esi
     inc ecx
-    add edx, BrickW
-    add edx, BrickGap
-    jmp B1_Col
+    cmp ecx, 15
+    jl @b
+    ret
+MeltReaction endp
