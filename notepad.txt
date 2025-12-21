@@ -1,0 +1,36 @@
+
+    ; P1挡板与自己球
+    mov eax, Paddle1X
+    add eax, PaddleW
+    .if Ball1X < eax
+        mov edx, Paddle1Y
+        mov ecx, edx
+        add ecx, PaddleH
+        .if Ball1Y >= sdword ptr edx && Ball1Y <= ecx
+            neg Vel1X
+            mov eax, Paddle1X
+            mov Ball1X, eax
+            mov ecx, Pad1Color
+            mov Ball1Color, ecx
+            push eax
+            invoke GetRandomIdx, 5
+            mov Pad1Color, eax
+            pop eax
+        .endif
+    .endif
+
+    ;P1挡板与对方球
+    mov eax, Paddle1X
+    add eax, PaddleW
+    .if Ball2X < eax
+        mov edx, Paddle1Y
+        mov ecx, edx
+        add ecx, PaddleH
+        .if Ball2Y >= edx && Ball2Y <= ecx
+            dec Life1
+            neg Vel2X
+            mov eax, Paddle1X
+            add eax, PaddleW
+            mov Ball2X, eax
+        .endif
+    .endif

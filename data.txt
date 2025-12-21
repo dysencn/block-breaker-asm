@@ -1,0 +1,12 @@
+    ; --- 球数据 ---
+    Ball1X      dd 80
+    Ball1Y      dd 320
+    Vel1X       dd 4
+    Vel1Y       dd 4
+    Ball1Color  dd 0 
+    
+    Ball2X      dd 600
+    Ball2Y      dd 320
+    Vel2X       dd 0
+    Vel2Y       dd 0
+    Ball2Color  dd 0 
