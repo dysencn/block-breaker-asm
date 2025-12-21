@@ -85,6 +85,13 @@ includelib \masm32\lib\masm32.lib
     GameOverCap  db "Game Over", 0
     RandSeed     dd 0
 
+    MAX_EFFECTS    equ 10         ; 同时最多显示10个飘字
+    EffectActive   db MAX_EFFECTS dup(0) ; 特效是否激活
+    EffectX        dd MAX_EFFECTS dup(0)
+    EffectY        dd MAX_EFFECTS dup(0)
+    EffectLife     dd MAX_EFFECTS dup(0) ; 生命周期（如从255递减到0）
+    TxtMinusOne    db "-1", 0
+
     msgBuf db 64 dup(0)
 
 .data?
@@ -110,6 +117,30 @@ GetRandomIdx proc range:DWORD
     mov eax, edx
     ret
 GetRandomIdx endp
+
+;飘字函数
+SpawnEffect proc x:DWORD, y:DWORD
+    push eax
+    push ecx
+    mov ecx, 0
+@@:
+    .if EffectActive[ecx] == 0
+        mov EffectActive[ecx], 1
+        mov eax, x
+        mov EffectX[ecx*4], eax
+        mov eax, y
+        mov EffectY[ecx*4], eax
+        mov EffectLife[ecx*4], 40    ; 设置20帧的寿命
+        jmp @f
+    .endif
+    inc ecx
+    cmp ecx, MAX_EFFECTS
+    jl @b
+@@:
+    pop ecx
+    pop eax
+    ret
+SpawnEffect endp
 
 InitGameData proc
     mov esi, offset Bricks
@@ -359,6 +390,14 @@ B1_Col:
     cmp Ball1Y, eax
     jge B1_Skip
     dec byte ptr [esi]
+
+    ; --- 新增：触发特效 ---
+    push edx    ; edx 是当前砖块的 X
+    push ebx    ; ebx 是当前砖块的 Y
+    invoke SpawnEffect, edx, ebx
+    pop ebx
+    pop edx
+
     neg Vel1X
     jmp B2_Check 
 B1_Skip:
@@ -409,8 +448,15 @@ B2_Col:
     cmp Ball2Y, eax
     jge B2_Skip
     
-    ; [修改2] 撞到了，生命值减1
     dec byte ptr [esi]
+
+    ; --- 新增：触发特效 ---
+    push edx    ; edx 是当前砖块的 X
+    push ebx    ; ebx 是当前砖块的 Y
+    invoke SpawnEffect, edx, ebx
+    pop ebx
+    pop edx
+
     neg Vel2X
     jmp UpdateDone
 B2_Skip:
@@ -426,6 +472,21 @@ B2_NextRow:
     jmp B2_Row
 
 UpdateDone:
+
+    ; 更新特效位置
+    mov ecx, 0
+UpdateEffLoop:
+    .if EffectActive[ecx] != 0
+        sub EffectY[ecx*4], 1       ; 每一帧向上飘2像素
+        dec EffectLife[ecx*4]       ; 寿命减1
+        .if EffectLife[ecx*4] == 0
+            mov EffectActive[ecx], 0 ; 寿命耗尽，注销特效
+        .endif
+    .endif
+    inc ecx
+    cmp ecx, MAX_EFFECTS
+    jl UpdateEffLoop
+
     ret
 UpdateGame endp
 
@@ -438,6 +499,7 @@ PaintGame proc hdc:HDC, lprect:PTR RECT
     local currentY:DWORD
     local rectBrick:RECT
     local pColorArr:DWORD
+    local rectEff:RECT
 
     invoke CreateCompatibleDC, hdc
     mov memDC, eax
@@ -601,6 +663,28 @@ PaintNextRow:
     jmp PaintRow
 
 PaintEnd:
+
+    ; --- 绘制飘字特效 ---
+    invoke SetBkMode, memDC, TRANSPARENT ; 确保文字背景不会遮挡砖块
+    invoke SetTextColor, memDC, 0000FFFFh ; 黄色文字，醒目一点
+    mov edi, 0
+DrawEffLoop:
+    .if EffectActive[edi] != 0
+        mov eax, EffectX[edi*4]
+        mov rectEff.left, eax
+        add eax, 40
+        mov rectEff.right, eax
+        mov eax, EffectY[edi*4]
+        mov rectEff.top, eax
+        add eax, 20
+        mov rectEff.bottom, eax
+        
+        invoke DrawText, memDC, addr TxtMinusOne, -1, addr rectEff, DT_CENTER
+    .endif
+    inc edi
+    cmp edi, MAX_EFFECTS
+    jl DrawEffLoop
+
     invoke BitBlt, hdc, 0, 0, 710, 640, memDC, 0, 0, SRCCOPY
     invoke SelectObject, memDC, hOld
     invoke DeleteObject, hBitmap

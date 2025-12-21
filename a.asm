@@ -11,10 +11,10 @@ include \masm32\include\masm32.inc
 includelib \masm32\lib\user32.lib
 includelib \masm32\lib\kernel32.lib
 includelib \masm32\lib\gdi32.lib
-includelib \masm32\lib\masm32.lib ; 引入masm32库用于字符串转换
+includelib \masm32\lib\masm32.lib
 
 .data
-    AppName     db "MASM32 Breakout - Multi-Life Bricks",0
+    AppName     db "MASM32 Breakout",0
     ClassName   db "BreakoutClass",0
     
     WindowW     dd 710
@@ -27,21 +27,22 @@ includelib \masm32\lib\masm32.lib ; 引入masm32库用于字符串转换
     Life2       dd 3
     LifeSize    dd 15
     
-    ; 球 1
+    ; --- 球数据 ---
     Ball1X      dd 80
     Ball1Y      dd 320
     Vel1X       dd 4
     Vel1Y       dd 4
+    Ball1Color  dd 0 
     
-    ; 球 2
     Ball2X      dd 600
     Ball2Y      dd 320
     Vel2X       dd -4
-    Vel2Y       dd -5
+    Vel2Y       dd -4
+    Ball2Color  dd 0 
     
     BallSize    dd 24
     
-    ; 挡板
+    ; --- 挡板数据 ---
     Paddle1X    dd 15
     Paddle1Y    dd 270
     Paddle2X    dd 680
@@ -49,79 +50,131 @@ includelib \masm32\lib\masm32.lib ; 引入masm32库用于字符串转换
     PaddleW     dd 15
     PaddleH     dd 100
     PaddleSpeed dd 20
+    Pad1Color   dd 0 
+    Pad2Color   dd 0 
     
-    ; 砖块配置
-    ; 注意：这里分配了空间，但数值将在 InitBricks 中被随机覆盖
+    ; --- 砖块配置 ---
     Bricks      db 15 dup(1) 
+    BrickColors db 15 dup(0) 
+    
     BrickRows   dd 5
     BrickCols   dd 3
     BrickW      dd 30
     BrickH      dd 100
     BrickGap    dd 10
-    BrickOffX   dd 340
-    BrickOffY   dd 60
+    BrickOffX   dd 300
+    BrickOffY   dd 30
+
+    Life1X      dd 40
+    LifeY       dd 10
+    Life2X      dd 660
+    LifeSpace   dd 25
+
+
+    ; --- 颜色系统配置 ---
+    ColorValues dd 000000FFh ; 0 红色
+                dd 00800000h ; 1 深蓝色
+                dd 00999900h ; 2 蓝绿
+                dd 00800080h ; 3 紫色
+                dd 00E6D8ADh ; 4 浅蓝色
     
     PauseCaption db "Game Paused", 0
     PauseMsg     db "Game is paused. Click OK to continue.", 0
-
     MsgP1Win     db "Player 2 Out of Lives! Player 1 Wins!", 0
     MsgP2Win     db "Player 1 Out of Lives! Player 2 Wins!", 0
     GameOverCap  db "Game Over", 0
-
-    ; 随机数种子
     RandSeed     dd 0
 
+    MAX_EFFECTS    equ 10         ; 同时最多显示10个飘字
+    EffectActive   db MAX_EFFECTS dup(0) ; 特效是否激活
+    EffectX        dd MAX_EFFECTS dup(0)
+    EffectY        dd MAX_EFFECTS dup(0)
+    EffectLife     dd MAX_EFFECTS dup(0) ; 生命周期（如从255递减到0）
+    TxtMinusOne    db "-1", 0
+
+    msgBuf db 64 dup(0)
+
 .data?
-    hInstance   HINSTANCE ?
-    hBrushBall  HBRUSH ?
-    hBrushPad1  HBRUSH ?
-    hBrushPad2  HBRUSH ?
-    hBrushBrick HBRUSH ?
-    hBrushLife  HBRUSH ?
-    
-    ; 用于显示数字的临时缓冲区
-    szNumBuffer db 4 dup(?) 
+    hInstance     HINSTANCE ?
+    hColorBrushes dd 5 dup(?) 
+    hBrushLife    HBRUSH ?    ; 专门用于固定红色的生命值点
+    szNumBuffer   db 4 dup(?) 
 
 .code
 
 WinMain PROTO :HINSTANCE, :HINSTANCE, :LPSTR, :DWORD
 
-; --- 简单的随机数生成器 ---
-; 输入: 范围上限 (例如 5)
-; 输出: eax = 1 到 Range 之间的随机数
-GetRandomRange proc range:DWORD
+; --- 工具函数 ---
+GetRandomIdx proc range:DWORD
     invoke GetTickCount
-    add eax, RandSeed      ; 混入之前的种子
+    add eax, RandSeed      
     imul eax, eax, 1103515245
     add eax, 12345
-    mov RandSeed, eax      ; 更新种子
+    mov RandSeed, eax      
     xor edx, edx
     mov ecx, range
-    div ecx                ; edx = eax % range
+    div ecx                
     mov eax, edx
-    inc eax                ; 结果 + 1 (变为 1-5)
     ret
-GetRandomRange endp
+GetRandomIdx endp
 
-; --- 初始化砖块生命值 ---
-InitBricks proc
+;飘字函数
+SpawnEffect proc x:DWORD, y:DWORD
+    push eax
+    push ecx
+    mov ecx, 0
+@@:
+    .if EffectActive[ecx] == 0
+        mov EffectActive[ecx], 1
+        mov eax, x
+        mov EffectX[ecx*4], eax
+        mov eax, y
+        mov EffectY[ecx*4], eax
+        mov EffectLife[ecx*4], 40    ; 设置20帧的寿命
+        jmp @f
+    .endif
+    inc ecx
+    cmp ecx, MAX_EFFECTS
+    jl @b
+@@:
+    pop ecx
+    pop eax
+    ret
+SpawnEffect endp
+
+InitGameData proc
     mov esi, offset Bricks
-    mov ecx, 15 ; 总共15块砖 (5行 * 3列)
+    mov edi, offset BrickColors
+    mov ecx, 15 
 InitLoop:
     push ecx
+    push edi
     push esi
-    invoke GetRandomRange, 5 ; 生成 1-5
+    invoke GetRandomIdx, 5
+    inc eax ; 随机生命 1-5
     pop esi
-    mov byte ptr [esi], al   ; 存入砖块数组
+    mov byte ptr [esi], al
     inc esi
+    invoke GetRandomIdx, 5
+    pop edi
+    mov byte ptr [edi], al
+    inc edi
     pop ecx
     dec ecx
     jnz InitLoop
+
+    invoke GetRandomIdx, 5
+    mov Ball1Color, eax
+    invoke GetRandomIdx, 5
+    mov Ball2Color, eax
+    invoke GetRandomIdx, 5
+    mov Pad1Color, eax
+    invoke GetRandomIdx, 5
+    mov Pad2Color, eax
     ret
-InitBricks endp
+InitGameData endp
 
 CheckKeyboard proc
-    ; --- P1 控制 (W/S) ---
     invoke GetAsyncKeyState, 57h ; W
     .if eax != 0
         mov eax, Paddle1Y
@@ -131,7 +184,6 @@ CheckKeyboard proc
         .endif
         mov Paddle1Y, eax
     .endif
-
     invoke GetAsyncKeyState, 53h ; S
     .if eax != 0
         mov eax, Paddle1Y
@@ -144,8 +196,6 @@ CheckKeyboard proc
         .endif
         mov Paddle1Y, eax
     .endif
-
-    ; --- P2 控制 (UP/DOWN) ---
     invoke GetAsyncKeyState, VK_UP
     .if eax != 0
         mov eax, Paddle2Y
@@ -155,7 +205,6 @@ CheckKeyboard proc
         .endif
         mov Paddle2Y, eax
     .endif
-
     invoke GetAsyncKeyState, VK_DOWN
     .if eax != 0
         mov eax, Paddle2Y
@@ -171,36 +220,35 @@ CheckKeyboard proc
     ret
 CheckKeyboard endp
 
-UpdateGame proc hWin:HWND
-    ; 检查生命值
+UpdateGame proc hwnd:HWND
+
+    ;生命检测
     .if Life1 == 0
-        invoke KillTimer, hWin, TimerID
-        invoke MessageBox, hWin, addr MsgP2Win, addr GameOverCap, MB_OK
+        invoke KillTimer, hwnd, TimerID
+        invoke MessageBox, hwnd, addr MsgP2Win, addr GameOverCap, MB_OK
         invoke PostQuitMessage, 0
         mov Life1, -1 
         ret
     .elseif Life2 == 0
-        invoke KillTimer, hWin, TimerID
-        invoke MessageBox, hWin, addr MsgP1Win, addr GameOverCap, MB_OK
+        invoke KillTimer, hwnd, TimerID
+        invoke MessageBox, hwnd, addr MsgP1Win, addr GameOverCap, MB_OK
         invoke PostQuitMessage, 0
         mov Life2, -1 
         ret
     .endif
-
     .if sdword ptr Life1 < 0 || sdword ptr Life2 < 0
         ret
     .endif
 
     invoke CheckKeyboard
 
-    ; 更新球位置
+    ;两个球的常规位置更新
     mov eax, Ball1X
     add eax, Vel1X
     mov Ball1X, eax
     mov eax, Ball1Y
     add eax, Vel1Y
     mov Ball1Y, eax
-
     mov eax, Ball2X
     add eax, Vel2X
     mov Ball2X, eax
@@ -209,11 +257,93 @@ UpdateGame proc hWin:HWND
     mov Ball2Y, eax
 
     ; 边界反弹
-    .if sdword ptr Ball1Y < 0 || Ball1Y > 580
+    mov eax, WindowH
+    sub eax, BallSize
+    sub eax, BallSize
+    .if sdword ptr Ball1Y < 0 || Ball1Y > eax
         neg Vel1Y
     .endif
-    .if sdword ptr Ball2Y < 0 || Ball2Y > 580
+    .if sdword ptr Ball2Y < 0 || Ball2Y > eax
         neg Vel2Y
+    .endif
+
+
+    ; 墙壁反弹
+    .if Ball1X > 680
+        neg Vel1X
+    .endif
+    .if sdword ptr Ball2X < 0
+        neg Vel2X
+    .endif
+
+    ; P1挡板与自己球
+    mov eax, Paddle1X
+    add eax, PaddleW
+    .if Ball1X < eax
+        mov edx, Paddle1Y
+        mov ecx, edx
+        add ecx, PaddleH
+        .if Ball1Y >= sdword ptr edx && Ball1Y <= ecx
+            neg Vel1X
+            mov eax, Paddle1X
+            add eax, PaddleW
+            mov Ball1X, eax
+            mov ecx, Pad1Color
+            mov Ball1Color, ecx
+            invoke GetRandomIdx, 5
+            mov Pad1Color, eax
+        .endif
+    .endif
+
+    ;P1挡板与对方球
+    mov eax, Paddle1X
+    add eax, PaddleW
+    .if Ball2X < eax
+        mov edx, Paddle1Y
+        mov ecx, edx
+        add ecx, PaddleH
+        .if Ball2Y >= edx && Ball2Y <= ecx
+            dec Life1
+            neg Vel2X
+            mov eax, Paddle1X
+            add eax, PaddleW
+            mov Ball2X, eax
+        .endif
+    .endif
+
+    ;P2挡板与自己球
+    mov eax, Paddle2X
+    sub eax, BallSize
+    .if Ball2X > eax 
+        mov edx, Paddle2Y
+        mov ecx, edx
+        add ecx, PaddleH
+        .if Ball2Y >= sdword ptr edx && Ball2Y <= ecx
+            neg Vel2X
+            mov eax, Paddle2X
+            sub eax, BallSize
+            mov Ball2X, eax
+            mov ecx, Pad2Color
+            mov Ball2Color, ecx
+            invoke GetRandomIdx, 5
+            mov Pad2Color, eax
+        .endif
+    .endif
+
+    ;P2挡板与对方球
+    mov eax, Paddle2X
+    sub eax, BallSize
+    .if Ball1X > eax 
+        mov edx, Paddle1Y
+        mov ecx, edx
+        add ecx, PaddleH
+        .if Ball1Y >= sdword ptr edx && Ball1Y <= ecx
+            dec Life2
+            neg Vel1X
+            mov eax, Paddle2X
+            sub eax, BallSize
+            mov Ball1X, eax
+        .endif
     .endif
 
     ; 左右出界判定 (失误)
@@ -228,91 +358,6 @@ UpdateGame proc hWin:HWND
         mov Vel2X, -5
     .endif
 
-    ; 墙壁反弹
-    .if Ball1X > 680
-        neg Vel1X
-    .endif
-    .if sdword ptr Ball2X < 0
-        neg Vel2X
-    .endif
-
-    ; --- 挡板碰撞判定 (P1) ---
-    mov eax, Paddle1X
-    add eax, PaddleW
-    .if Ball1X < eax
-        mov edx, Paddle1Y
-        mov ecx, edx
-        add ecx, PaddleH
-
-        .if Ball1Y >= edx && Ball1Y <= ecx
-            neg Vel1X
-            mov eax, Paddle1X
-            add eax, PaddleW
-            mov Ball1X, eax
-        .endif
-    .endif
-    
-    mov eax, Ball2X
-    .if eax < 30 
-        mov eax, Ball2Y
-        add eax, BallSize
-        .if eax >= Paddle1Y
-            mov ecx, Paddle1Y
-            add ecx, PaddleH
-            .if Ball2Y <= ecx
-                mov eax, Paddle1X
-                add eax, PaddleW
-                .if Ball2X <= eax
-                    dec Life1 
-                    neg Vel2X
-                    mov Ball2X, eax
-                .endif
-            .endif
-        .endif
-    .endif
-
-    ; --- 挡板碰撞判定 (P2) ---
-    mov eax, Ball1X
-    .if eax > 650 
-        mov eax, Ball1Y
-        add eax, BallSize
-        .if eax >= Paddle2Y
-            mov ecx, Paddle2Y
-            add ecx, PaddleH
-            .if Ball1Y <= ecx
-                mov eax, Ball1X
-                add eax, BallSize
-                .if eax >= Paddle2X
-                    dec Life2 
-                    neg Vel1X
-                    mov eax, Paddle2X
-                    sub eax, BallSize
-                    mov Ball1X, eax
-                .endif
-            .endif
-        .endif
-    .endif
-
-    mov eax, Ball2X
-    .if eax > 650 
-        mov eax, Ball2Y
-        add eax, BallSize
-        .if eax >= Paddle2Y
-            mov ecx, Paddle2Y
-            add ecx, PaddleH
-            .if Ball2Y <= ecx
-                mov eax, Ball2X
-                add eax, BallSize
-                .if eax >= Paddle2X
-                    neg Vel2X
-                    mov eax, Paddle2X
-                    sub eax, BallSize
-                    mov Ball2X, eax
-                .endif
-            .endif
-        .endif
-    .endif
-
     ; --- 砖块碰撞检测 (球1) ---
     mov esi, offset Bricks
     mov edi, 0
@@ -325,12 +370,9 @@ B1_Row:
 B1_Col:
     cmp ecx, BrickCols
     jge B1_NextRow
-    
-    ; [修改1] 只要生命值 > 0 就算存在
     cmp byte ptr [esi], 0
     je B1_Skip
-
-    ; AABB检测
+    ; AABB
     mov eax, Ball1X
     add eax, BallSize
     cmp eax, edx
@@ -347,9 +389,15 @@ B1_Col:
     add eax, BrickH
     cmp Ball1Y, eax
     jge B1_Skip
-    
-    ; [修改2] 撞到了，生命值减1，而不是直接清零
     dec byte ptr [esi]
+
+    ; --- 新增：触发特效 ---
+    push edx    ; edx 是当前砖块的 X
+    push ebx    ; ebx 是当前砖块的 Y
+    invoke SpawnEffect, edx, ebx
+    pop ebx
+    pop edx
+
     neg Vel1X
     jmp B2_Check 
 B1_Skip:
@@ -400,8 +448,15 @@ B2_Col:
     cmp Ball2Y, eax
     jge B2_Skip
     
-    ; [修改2] 撞到了，生命值减1
     dec byte ptr [esi]
+
+    ; --- 新增：触发特效 ---
+    push edx    ; edx 是当前砖块的 X
+    push ebx    ; ebx 是当前砖块的 Y
+    invoke SpawnEffect, edx, ebx
+    pop ebx
+    pop edx
+
     neg Vel2X
     jmp UpdateDone
 B2_Skip:
@@ -417,6 +472,21 @@ B2_NextRow:
     jmp B2_Row
 
 UpdateDone:
+
+    ; 更新特效位置
+    mov ecx, 0
+UpdateEffLoop:
+    .if EffectActive[ecx] != 0
+        sub EffectY[ecx*4], 1       ; 每一帧向上飘2像素
+        dec EffectLife[ecx*4]       ; 寿命减1
+        .if EffectLife[ecx*4] == 0
+            mov EffectActive[ecx], 0 ; 寿命耗尽，注销特效
+        .endif
+    .endif
+    inc ecx
+    cmp ecx, MAX_EFFECTS
+    jl UpdateEffLoop
+
     ret
 UpdateGame endp
 
@@ -427,7 +497,9 @@ PaintGame proc hdc:HDC, lprect:PTR RECT
     local rectClient:RECT
     local currentX:DWORD
     local currentY:DWORD
-    local rectBrick:RECT ; 用于绘制文字的矩形区域
+    local rectBrick:RECT
+    local pColorArr:DWORD
+    local rectEff:RECT
 
     invoke CreateCompatibleDC, hdc
     mov memDC, eax
@@ -444,15 +516,15 @@ PaintGame proc hdc:HDC, lprect:PTR RECT
     mov rectClient.bottom, 640
     invoke FillRect, memDC, addr rectClient, eax
 
-    ; 绘制生命值 (UI)
-    invoke SelectObject, memDC, hBrushLife
-    ; P1
+    ; --- 绘制生命值点 (强制固定红色) ---
+    invoke SelectObject, memDC, hBrushLife ; 使用 WM_CREATE 中定义的红色画刷
+    ; P1 生命
     mov edi, 0
     .while edi < Life1
         mov eax, edi
-        imul eax, 25
-        add eax, 20
-        mov ebx, 10
+        imul eax, LifeSpace
+        add eax, Life1X
+        mov ebx, LifeY
         mov ecx, eax
         add ecx, LifeSize
         mov edx, ebx
@@ -462,14 +534,14 @@ PaintGame proc hdc:HDC, lprect:PTR RECT
         pop edi
         inc edi
     .endw
-    ; P2
+    ; P2 生命
     mov edi, 0
     .while edi < Life2
-        mov eax, 660
+        mov eax, Life2X
         mov ebx, edi
-        imul ebx, 25
+        imul ebx, LifeSpace
         sub eax, ebx
-        mov ebx, 10
+        mov ebx, LifeY
         mov ecx, eax
         add ecx, LifeSize
         mov edx, ebx
@@ -480,43 +552,49 @@ PaintGame proc hdc:HDC, lprect:PTR RECT
         inc edi
     .endw
 
-    ; 绘制挡板
-    invoke SelectObject, memDC, hBrushPad1
+    ; --- 绘制 P1 挡板 (动态颜色) ---
+    mov eax, Pad1Color
+    mov ecx, hColorBrushes[eax*4] ; 取数组中的画刷
+    invoke SelectObject, memDC, ecx
     mov eax, Paddle1X
     add eax, PaddleW
     mov ecx, Paddle1Y
     add ecx, PaddleH
     invoke Rectangle, memDC, Paddle1X, Paddle1Y, eax, ecx
 
-    invoke SelectObject, memDC, hBrushPad2
+    ; --- 绘制 P2 挡板 (动态颜色) ---
+    mov eax, Pad2Color
+    mov ecx, hColorBrushes[eax*4]
+    invoke SelectObject, memDC, ecx
     mov eax, Paddle2X
     add eax, PaddleW
     mov ecx, Paddle2Y
     add ecx, PaddleH
     invoke Rectangle, memDC, Paddle2X, Paddle2Y, eax, ecx
 
-    ; 绘制球
-    invoke SelectObject, memDC, hBrushBall
+    ; --- 绘制球 ---
+    mov eax, Ball1Color
+    invoke SelectObject, memDC, hColorBrushes[eax*4]
     mov eax, Ball1X
     add eax, BallSize
     mov ecx, Ball1Y
     add ecx, BallSize
     invoke Ellipse, memDC, Ball1X, Ball1Y, eax, ecx
     
+    mov eax, Ball2Color
+    invoke SelectObject, memDC, hColorBrushes[eax*4]
     mov eax, Ball2X
     add eax, BallSize
     mov ecx, Ball2Y
     add ecx, BallSize
     invoke Ellipse, memDC, Ball2X, Ball2Y, eax, ecx
 
-    ; --- 绘制砖块及文字 ---
-    invoke SelectObject, memDC, hBrushBrick
-    
-    ; 设置文字属性：白色，背景透明
+    ; --- 绘制砖块 ---
     invoke SetTextColor, memDC, 00FFFFFFh 
     invoke SetBkMode, memDC, TRANSPARENT
-
     mov esi, offset Bricks
+    mov eax, offset BrickColors
+    mov pColorArr, eax
     mov edi, 0
     mov eax, BrickOffY
     mov currentY, eax
@@ -528,52 +606,55 @@ PaintRow:
     mov currentX, eax
 PaintCol:
     cmp ecx, BrickCols
-    jge PaintNext
-    
-    ; [修改3] 只要生命值 > 0 就绘制
+    jge PaintNextRow
     cmp byte ptr [esi], 0
-    je SkipP
-
-    ; 1. 绘制矩形
+    je SkipDraw
+    push ecx
+    push edi
+    push esi
+    mov esi, pColorArr
+    xor eax, eax
+    mov al, byte ptr [esi]
+    invoke SelectObject, memDC, hColorBrushes[eax*4]
+    pop esi
+    pop edi
+    pop ecx
     mov eax, currentX
     add eax, BrickW
     mov ebx, currentY
     add ebx, BrickH
     push ecx
     invoke Rectangle, memDC, currentX, currentY, eax, ebx
-    
-    ; 2. 绘制生命值数字
-    ; 设置绘制区域 rectBrick
     mov eax, currentX
     mov rectBrick.left, eax
+
+    mov eax, currentX
     add eax, BrickW
     mov rectBrick.right, eax
-    
+
     mov eax, currentY
     mov rectBrick.top, eax
+
+    mov eax, currentY
     add eax, BrickH
     mov rectBrick.bottom, eax
-
-    ; 将数字转为字符串
     xor eax, eax
-    mov al, byte ptr [esi] ; 获取当前生命值
-    add al, '0'            ; 转换为ASCII字符 (例如 3 -> '3')
+    mov al, byte ptr [esi]
+    add al, '0'
     mov szNumBuffer[0], al
-    mov szNumBuffer[1], 0  ; 字符串结尾
-
-    ; 绘制文字于矩形中心
+    mov szNumBuffer[1], 0
     invoke DrawText, memDC, addr szNumBuffer, -1, addr rectBrick, DT_CENTER or DT_VCENTER or DT_SINGLELINE
-
     pop ecx
-SkipP:
+SkipDraw:
     inc esi
-    inc ecx
+    inc pColorArr
     mov eax, currentX
     add eax, BrickW
     add eax, BrickGap
     mov currentX, eax
+    inc ecx
     jmp PaintCol
-PaintNext:
+PaintNextRow:
     inc edi
     mov eax, currentY
     add eax, BrickH
@@ -582,6 +663,28 @@ PaintNext:
     jmp PaintRow
 
 PaintEnd:
+
+    ; --- 绘制飘字特效 ---
+    invoke SetBkMode, memDC, TRANSPARENT ; 确保文字背景不会遮挡砖块
+    invoke SetTextColor, memDC, 0000FFFFh ; 黄色文字，醒目一点
+    mov edi, 0
+DrawEffLoop:
+    .if EffectActive[edi] != 0
+        mov eax, EffectX[edi*4]
+        mov rectEff.left, eax
+        add eax, 40
+        mov rectEff.right, eax
+        mov eax, EffectY[edi*4]
+        mov rectEff.top, eax
+        add eax, 20
+        mov rectEff.bottom, eax
+        
+        invoke DrawText, memDC, addr TxtMinusOne, -1, addr rectEff, DT_CENTER
+    .endif
+    inc edi
+    cmp edi, MAX_EFFECTS
+    jl DrawEffLoop
+
     invoke BitBlt, hdc, 0, 0, 710, 640, memDC, 0, 0, SRCCOPY
     invoke SelectObject, memDC, hOld
     invoke DeleteObject, hBitmap
@@ -591,34 +694,36 @@ PaintGame endp
 
 WndProc proc hwnd:HWND, uMsg:UINT, wParam:WPARAM, lParam:LPARAM
     local ps:PAINTSTRUCT
+    local hdc:HDC
     .if uMsg == WM_CREATE
-        ; 初始化资源
-        invoke CreateSolidBrush, 000000FFh ; 红球
-        mov hBrushBall, eax
-        invoke CreateSolidBrush, 00FF0000h ; 蓝板
-        mov hBrushPad1, eax
-        invoke CreateSolidBrush, 0000FFFFh ; 黄板
-        mov hBrushPad2, eax
-        invoke CreateSolidBrush, 00008000h ; 绿砖
-        mov hBrushBrick, eax
-        invoke CreateSolidBrush, 000000FFh ; 生命指示
+        mov ecx, 0
+    CreateBrushLoop:
+        cmp ecx, 5
+        jge CreateBrushDone
+        push ecx
+        invoke CreateSolidBrush, ColorValues[ecx*4]
+        pop ecx
+        mov hColorBrushes[ecx*4], eax
+        inc ecx
+        jmp CreateBrushLoop
+    CreateBrushDone:
+
+        ; --- 修正：为生命值创建固定的红色画刷 ---
+        invoke CreateSolidBrush, 000000FFh ; 纯红色 (RGB: 255, 0, 0)
         mov hBrushLife, eax
         
-        ; [新增] 初始化随机砖块生命值
         invoke GetTickCount
-        mov RandSeed, eax ; 初始化随机种子
-        invoke InitBricks
-
+        mov RandSeed, eax
+        invoke InitGameData
         invoke SetTimer, hwnd, TimerID, TimerDelay, NULL
+
     .elseif uMsg == WM_TIMER
         invoke UpdateGame, hwnd
         invoke InvalidateRect, hwnd, NULL, FALSE
     .elseif uMsg == WM_PAINT
         invoke BeginPaint, hwnd, addr ps
-        push eax
-        lea ecx, ps.rcPaint
-        pop eax
-        invoke PaintGame, eax, ecx 
+        mov hdc, eax
+        invoke PaintGame, hdc, addr ps.rcPaint
         invoke EndPaint, hwnd, addr ps
     .elseif uMsg == WM_KEYDOWN
         .if wParam == VK_ESCAPE
@@ -627,10 +732,15 @@ WndProc proc hwnd:HWND, uMsg:UINT, wParam:WPARAM, lParam:LPARAM
             invoke SetTimer, hwnd, TimerID, TimerDelay, NULL
         .endif
     .elseif uMsg == WM_DESTROY
-        invoke DeleteObject, hBrushBall
-        invoke DeleteObject, hBrushPad1
-        invoke DeleteObject, hBrushPad2
-        invoke DeleteObject, hBrushBrick
+        mov ecx, 0
+    CleanupLoop:
+        cmp ecx, 5
+        jge CleanupDone
+        invoke DeleteObject, hColorBrushes[ecx*4]
+        inc ecx
+        jmp CleanupLoop
+    CleanupDone:
+        invoke DeleteObject, hBrushLife ; 清理生命值红色画刷
         invoke PostQuitMessage, NULL
     .else
         invoke DefWindowProc, hwnd, uMsg, wParam, lParam
@@ -652,17 +762,13 @@ WinMain proc hInst:HINSTANCE, hPrevInst:HINSTANCE, CmdLine:LPSTR, CmdShow:DWORD
     push hInst
     pop wc.hInstance
     mov wc.hbrBackground, COLOR_WINDOWTEXT+1
-    mov wc.lpszMenuName, NULL
     mov wc.lpszClassName, offset ClassName
-    mov wc.hIcon, NULL
-    mov wc.hIconSm, NULL
     invoke LoadCursor, NULL, IDC_ARROW
     mov wc.hCursor, eax
     invoke RegisterClassEx, addr wc
     invoke CreateWindowEx, NULL, addr ClassName, addr AppName,
            WS_OVERLAPPED or WS_CAPTION or WS_SYSMENU or WS_MINIMIZEBOX,
-           CW_USEDEFAULT, CW_USEDEFAULT, WindowW, WindowH,
-           NULL, NULL, hInst, NULL
+           CW_USEDEFAULT, CW_USEDEFAULT, 710, 640, NULL, NULL, hInst, NULL
     mov hwnd, eax
     invoke ShowWindow, hwnd, CmdShow
     .while TRUE
