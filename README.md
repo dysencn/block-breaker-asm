@@ -22,7 +22,9 @@ A block-breaker game developed with Assembly code
 
 一个球和一个砖块碰撞时，与双方属性有关。
 
-属性相同：常规的血量减一。
+固定血量减一。
+
+属性相同：无任何行为。
 
 
 属性不同：

@@ -243,22 +243,58 @@ ResetBallPos proc bIdx:DWORD
     ret
 ResetBallPos endp
 
-
-;扩散反应
-HandleSwirl proc bIdx:DWORD, bc:DWORD, tc:DWORD
-    local targetColor:DWORD
-    ; 确定染色目标
-    mov eax, bc
-    .if eax == 2
-        mov eax, tc ; 球是风，染成砖块色
-    .else
-        mov eax, bc ; 砖块是风，染成球色
-    .endif
-    mov targetColor, eax
+; --- 扩散反应：将(row, col)周围的砖块染成 newColor ---
+HandleSwirl proc cRow:DWORD, cCol:DWORD, newColor:DWORD
     
-    ; 这里的逻辑较复杂，简化演示：修改对应索引的 BrickColors
-    ; 实际应用时需计算上下左右的索引并检查边界
-    ret 
+    ; 暂存目标颜色到 CL 寄存器 (byte)
+    mov eax, newColor
+    mov cl, al
+
+    ; 1. 向上染色 (Row - 1)
+    mov eax, cRow
+    .if eax > 0             ; 边界检查
+        dec eax             ; row - 1
+        imul eax, BrickCols ; (row-1) * 3  (这里假设每行3列)
+        add eax, cCol       ; + col = 索引
+        mov byte ptr BrickColors[eax], cl
+    .endif
+
+    ; 2. 向下染色 (Row + 1)
+    mov eax, cRow
+    .if eax < 4             ; 边界检查 (总行数5, MaxIndex=4)
+        inc eax             ; row + 1
+        imul eax, BrickCols
+        add eax, cCol
+        mov byte ptr BrickColors[eax], cl
+    .endif
+
+    ; 3. 向左染色 (Col - 1)
+    mov eax, cCol
+    .if eax > 0             ; 边界检查
+        dec eax             ; col - 1
+        ; 计算索引: Row * 3 + (Col - 1)
+        push eax            ; 保存 col-1
+        mov eax, cRow
+        imul eax, BrickCols
+        pop edx             ; 恢复 col-1 到 edx
+        add eax, edx
+        mov byte ptr BrickColors[eax], cl
+    .endif
+
+    ; 4. 向右染色 (Col + 1)
+    mov eax, cCol
+    .if eax < 2             ; 边界检查 (总列数3, MaxIndex=2)
+        inc eax             ; col + 1
+        ; 计算索引: Row * 3 + (Col + 1)
+        push eax            
+        mov eax, cRow
+        imul eax, BrickCols
+        pop edx             
+        add eax, edx
+        mov byte ptr BrickColors[eax], cl
+    .endif
+
+    ret
 HandleSwirl endp
 
 ;冻结反应
@@ -316,112 +352,150 @@ SuperConduct proc bIdx:DWORD
     ret
 SuperConduct endp
 
-; --- 内部工具：安全扣除砖块血量 ---
-DamageBrick proc idx:DWORD
-    mov ecx, idx
-    .if byte ptr Bricks[ecx] > 0
-        dec byte ptr Bricks[ecx]
-    .endif
-    ret
-DamageBrick endp
+; --- 超载：以(row, col)为中心，对上下左右进行爆破 ---
+Overloaded proc cRow:DWORD, cCol:DWORD
 
-; --- 超载：附近砖块血量减1 ---
-Overloaded proc brickIdx:DWORD
-    local row:DWORD
-    local col:DWORD
+    ; 1. 向上爆破 (Row - 1)
+    mov eax, cRow
+    .if eax > 0             ; 确保没超出上边界
+        dec eax             ; eax = row - 1
+        invoke DamageAndEffect, eax, cCol
+    .endif
 
-    ; 计算行列 (Index = Row * 3 + Col)
-    mov eax, brickIdx
-    xor edx, edx
-    mov ecx, 3
-    div ecx
-    mov row, eax
-    mov col, edx
+    ; 2. 向下爆破 (Row + 1)
+    ; 注意：BrickRows 是 5，最大索引是 4
+    mov eax, cRow
+    .if eax < 4             ; 确保没超出下边界
+        inc eax             ; eax = row + 1
+        invoke DamageAndEffect, eax, cCol
+    .endif
 
-    ; 这里的逻辑是简单的：尝试减少周围 4 个方向的血量
-    ; 向上 (row-1)
-    .if row > 0
-        mov eax, brickIdx
-        sub eax, 3
-        invoke DamageBrick, eax
+    ; 3. 向左爆破 (Col - 1)
+    mov eax, cCol
+    .if eax > 0             ; 确保没超出左边界
+        dec eax             ; eax = col - 1
+        invoke DamageAndEffect, cRow, eax
     .endif
-    ; 向下 (row+1)
-    .if row < 4
-        mov eax, brickIdx
-        add eax, 3
-        invoke DamageBrick, eax
-    .endif
-    ; 向左 (col-1)
-    .if col > 0
-        mov eax, brickIdx
-        dec eax
-        invoke DamageBrick, eax
-    .endif
-    ; 向右 (col+1)
-    .if col < 2
-        mov eax, brickIdx
-        inc eax
-        invoke DamageBrick, eax
+
+    ; 4. 向右爆破 (Col + 1)
+    ; 注意：BrickCols 是 3，最大索引是 2
+    mov eax, cCol
+    .if eax < 2             ; 确保没超出右边界
+        inc eax             ; eax = col + 1
+        invoke DamageAndEffect, cRow, eax
     .endif
     ret
 Overloaded endp
 
+; --- 反应核心：只接收球的索引(1或2) ---
+; 依赖全局变量：CurrentBrickRow, CurrentBrickCol
+TriggerReaction proc ballIdx:DWORD
+    local brickIdx:DWORD
+    local bColor:DWORD  ; 球颜色
+    local tColor:DWORD  ; 砖块颜色 (Target Color)
+    local row:DWORD
+    local col:DWORD
 
-; --- 反应核心：输入球索引(1/2), 砖块索引(0-14), 球颜色, 砖块颜色 ---
-TriggerReaction proc ballIdx:DWORD, brickIdx:DWORD, bColor:DWORD, tColor:DWORD
+    ; 保护寄存器
+    push ebx
+    push esi
+    push edi
+
+    ; 1. 从全局变量获取行列
+    mov eax, CurrentBrickRow
+    mov row, eax
+    mov eax, CurrentBrickCol
+    mov col, eax
+
+    ; 2. 计算一维索引 Index = Row * 3 + Col
+    ; (注意：这里硬编码了列数3，建议以后用变量 BrickCols 替代)
+    mov eax, row
+    imul eax, BrickCols
+    add eax, col
+    mov brickIdx, eax
+
+    ; 3. 获取砖块颜色
+    mov esi, offset BrickColors
+    add esi, brickIdx
+    movzx ebx, byte ptr [esi]
+    mov tColor, ebx
+
+    ; 4. 获取球颜色
+    .if ballIdx == 1
+        mov eax, Ball1Color
+    .else
+        mov eax, Ball2Color
+    .endif
+    mov bColor, eax
+
+    ; --- 5. 固定行为：先扣血并飘字 ---
+    ; 无论什么属性，先调用这个通用扣血函数
+    invoke DamageAndEffect, row, col
+
+    ; --- 6. 属性相同判定 ---
     mov eax, bColor
     .if eax == tColor
-        ; --- 属性相同：常规减血 ---
-        mov esi, offset Bricks
-        add esi, brickIdx
-        dec byte ptr [esi]
-        ret
-    .endif
-
-    ; --- 处理【风】元素 (扩散) ---
-    .if bColor == 2 || tColor == 2
-        invoke HandleSwirl, brickIdx, bColor, tColor
+        ; 属性相同：无任何额外行为 (前面已经扣过血了)
         jmp DoneReaction
     .endif
 
-    ; --- 处理其它组合 (水0, 火1, 雷3, 冰4) ---
-    ; 这里使用一种简便算法：将两个颜色编号排序后组合判断
+    ; --- 7. 处理【风】元素 (扩散) ---
+    .if bColor == 2 || tColor == 2
+        .if bColor == 2
+            ; 球是风：把砖块的颜色(tColor)扩散给周围
+            invoke HandleSwirl, row, col, tColor
+        .else
+            ; 砖块是风：把球的颜色(bColor)扩散给周围
+            invoke HandleSwirl, row, col, bColor
+        .endif
+        jmp DoneReaction
+    .endif
+
+    ; --- 8. 处理其它元素反应 ---
+    ; 排序技巧：将两颜色放入 eax(小) 和 ebx(大)，避免判断两次顺序
     mov eax, bColor
     mov ebx, tColor
     .if eax > ebx
-        xchg eax, ebx ; 确保 eax < ebx
+        xchg eax, ebx 
     .endif
-    ; 现在 eax 是较小的颜色号，ebx 是较大的
+    
+    ; 此时 eax 是较小的颜色号，ebx 是较大的
 
-    ; 水(1) + 火(0) -> [0, 1] 蒸发
+    ; [水(1) + 火(0)] -> 蒸发
     .if eax == 0 && ebx == 1
+        ; 规则：砖块直接消失 (覆盖掉前面的-1，强制归零)
         mov esi, offset Bricks
         add esi, brickIdx
-        mov byte ptr [esi], 0 ; 砖块消失
+        mov byte ptr [esi], 0 
+        
+        ; 规则：球复位
         invoke ResetBallPos, ballIdx
     
-    ; 水(1) + 冰(4) -> [1, 4] 冻结
+    ; [水(1) + 冰(4)] -> 冻结
     .elseif eax == 1 && ebx == 4
+        ; 规则：球停2秒
         invoke FreezeBall, ballIdx
 
-    ; 水(1) + 雷(3) -> [1, 3] 感电
+    ; [水(1) + 雷(3)] -> 感电
     .elseif eax == 1 && ebx == 3
+        ; 规则：全场水元素扣血
         invoke ElectroCharged
 
-    ; 火(0) + 冰(4) -> [0, 4] 融化
+    ; [火(0) + 冰(4)] -> 融化
     .elseif eax == 0 && ebx == 4
+        ; 规则：全场冰变水
         invoke MeltReaction
 
-    ; 火(0) + 雷(3) -> [0, 3] 超载
+    ; [火(0) + 雷(3)] -> 超载
     .elseif eax == 0 && ebx == 3
-        invoke Overloaded, brickIdx
-
-    ; 冰(4) + 雷(3) -> [3, 4] 超导
-    .elseif eax == 3 && ebx == 4
-        invoke SuperConduct, ballIdx
+        ; 规则：炸周围
+        invoke Overloaded, row, col
     .endif
 
 DoneReaction:
+    pop edi
+    pop esi
+    pop ebx
     ret
 TriggerReaction endp
 
@@ -649,7 +723,7 @@ B1_Col:
     neg Vel1X
     @@:
 
-    invoke DamageAndEffect, CurrentBrickRow, CurrentBrickCol
+    invoke TriggerReaction, 1
 
     jmp SkipBall1Pos
 B1_Skip:
@@ -800,7 +874,7 @@ B2_Col:
     
     dec byte ptr [esi]
 
-    invoke DamageAndEffect, CurrentBrickRow, CurrentBrickCol
+    invoke TriggerReaction, 2
 
     jmp UpdateDone
 B2_Skip:
