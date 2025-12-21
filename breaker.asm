@@ -41,6 +41,7 @@ includelib \masm32\lib\masm32.lib
     Ball2Color  dd 0 
     
     BallSize    dd 24
+    BallHalfSize  dd 12
     
     ; --- 挡板数据 ---
     Paddle1X    dd 15
@@ -65,11 +66,28 @@ includelib \masm32\lib\masm32.lib
     BrickOffX   dd 300
     BrickOffY   dd 30
 
+    ;当前碰撞的行列
+    CurrentBrickRow dd 0
+    CurrentBrickCol dd 0
+
+    ;计算出来的砖块坐标
+    CalcBrickX  dd 0
+    CalcBrickY  dd 0
+
     Life1X      dd 40
     LifeY       dd 10
     Life2X      dd 660
     LifeSpace   dd 25
 
+    ; --- 初始位置常量 (用于蒸发/超导) ---
+    Ball1InitX  dd 80
+    Ball1InitY  dd 320
+    Ball2InitX  dd 600
+    Ball2InitY  dd 320
+
+    ; --- 反应状态 ---
+    FreezeTimer1 dd 0    ; 球1冻结计时器
+    FreezeTimer2 dd 0    ; 球2冻结计时器
 
     ; --- 颜色系统配置 ---
     ColorValues dd 000000FFh ; 0 红色
@@ -85,11 +103,18 @@ includelib \masm32\lib\masm32.lib
     GameOverCap  db "Game Over", 0
     RandSeed     dd 0
 
-    MAX_EFFECTS    equ 10         ; 同时最多显示10个飘字
+    MAX_EFFECTS    equ 20         ; 同时最多显示20个飘字
     EffectActive   db MAX_EFFECTS dup(0) ; 特效是否激活
     EffectX        dd MAX_EFFECTS dup(0)
     EffectY        dd MAX_EFFECTS dup(0)
     EffectLife     dd MAX_EFFECTS dup(0) ; 生命周期（如从255递减到0）
+
+    ; --- 新增：每个特效独立的文字指针和颜色 ---
+    EffectStrings  dd MAX_EFFECTS dup(0) ; 存储字符串的地址 (char*)
+    EffectColors   dd MAX_EFFECTS dup(0) ; 存储颜色值 (COLORREF)
+
+    ; --- 预设常量 ---
+    ColorYellow    dd 0000FFFFh          ; 黄色 (BGR)
     TxtMinusOne    db "-1", 0
 
     msgBuf db 64 dup(0)
@@ -119,7 +144,7 @@ GetRandomIdx proc range:DWORD
 GetRandomIdx endp
 
 ;飘字函数
-SpawnEffect proc x:DWORD, y:DWORD
+SpawnEffect proc x:DWORD, y:DWORD, lpString:DWORD, textColor:DWORD
     push eax
     push ecx
     mov ecx, 0
@@ -130,7 +155,13 @@ SpawnEffect proc x:DWORD, y:DWORD
         mov EffectX[ecx*4], eax
         mov eax, y
         mov EffectY[ecx*4], eax
-        mov EffectLife[ecx*4], 40    ; 设置20帧的寿命
+        mov EffectLife[ecx*4], 40    ; 设置40帧的寿命
+
+        mov eax, lpString
+        mov EffectStrings[ecx*4], eax
+        mov eax, textColor
+        mov EffectColors[ecx*4], eax
+
         jmp @f
     .endif
     inc ecx
@@ -141,6 +172,258 @@ SpawnEffect proc x:DWORD, y:DWORD
     pop eax
     ret
 SpawnEffect endp
+
+; --- 新函数：根据行列扣血并产生特效 ---
+; 参数 row: 行索引, col: 列索引
+DamageAndEffect proc row:DWORD, col:DWORD
+    local brickIdx:DWORD
+
+    ; 1. 计算一维数组索引 Index = row * BrickCols + col
+    ; 注意：你的 BrickCols 是 3
+    mov eax, row
+    imul eax, BrickCols
+    add eax, col
+    mov brickIdx, eax
+
+    ; 2. 检查血量，如果已经是 0 则直接返回
+    mov esi, offset Bricks
+    add esi, brickIdx
+    cmp byte ptr [esi], 0
+    je @f
+
+    ; 3. 扣血
+    dec byte ptr [esi]
+
+    ; 4. 计算该砖块的左上角 X 坐标
+    ; X = BrickOffX + col * (BrickW + BrickGap)
+    mov eax, col
+    mov ecx, BrickW
+    add ecx, BrickGap
+    imul eax, ecx
+    add eax, BrickOffX
+    mov CalcBrickX, eax
+
+    ; 5. 计算该砖块的左上角 Y 坐标
+    ; Y = BrickOffY + row * (BrickH + BrickGap)
+    mov eax, row
+    mov ecx, BrickH
+    add ecx, BrickGap
+    imul eax, ecx
+    add eax, BrickOffY
+    mov CalcBrickY, eax
+
+    ; 6. 调用飘字特效
+    ; 我们稍微对 Y 做一点偏移（减10），让字从砖块上方一点点飘出来
+    mov eax, CalcBrickY
+    sub eax, 10
+    invoke SpawnEffect, CalcBrickX, eax, addr TxtMinusOne, ColorYellow
+
+@@:
+    ret
+DamageAndEffect endp
+
+; --- 重置球的位置 (用于 蒸发) ---
+ResetBallPos proc bIdx:DWORD
+    .if bIdx == 1
+        mov eax, Ball1InitX
+        mov Ball1X, eax
+        mov eax, Ball1InitY
+        mov Ball1Y, eax
+        ; 速度重置为初始正向
+        mov Vel1X, 4
+        mov Vel1Y, 4
+    .else
+        mov eax, Ball2InitX
+        mov Ball2X, eax
+        mov eax, Ball2InitY
+        mov Ball2Y, eax
+        mov Vel2X, -4
+        mov Vel2Y, -4
+    .endif
+    ret
+ResetBallPos endp
+
+
+;扩散反应
+HandleSwirl proc bIdx:DWORD, bc:DWORD, tc:DWORD
+    local targetColor:DWORD
+    ; 确定染色目标
+    mov eax, bc
+    .if eax == 2
+        mov eax, tc ; 球是风，染成砖块色
+    .else
+        mov eax, bc ; 砖块是风，染成球色
+    .endif
+    mov targetColor, eax
+    
+    ; 这里的逻辑较复杂，简化演示：修改对应索引的 BrickColors
+    ; 实际应用时需计算上下左右的索引并检查边界
+    ret 
+HandleSwirl endp
+
+;冻结反应
+FreezeBall proc bIdx:DWORD
+    .if bIdx == 1
+        mov FreezeTimer1, 120 ; 约2秒 (60fps * 2)
+    .else
+        mov FreezeTimer2, 120
+    .endif
+    ret
+FreezeBall endp
+
+; --- 融化：场上所有 冰(4) 变为 水(1) ---
+MeltReaction proc
+    mov ecx, 0
+@@:
+    .if BrickColors[ecx] == 4 ; 冰
+        mov BrickColors[ecx], 1 ; 变水
+    .endif
+    inc ecx
+    cmp ecx, 15
+    jl @b
+    ret
+MeltReaction endp
+
+;感电
+ElectroCharged proc
+    mov ecx, 0
+@@:
+    mov al, BrickColors[ecx]
+    .if al == 1 ; 水元素
+        .if Bricks[ecx] > 0
+            dec Bricks[ecx]
+        .endif
+    .endif
+    inc ecx
+    cmp ecx, 15
+    jl @b
+    ret
+ElectroCharged endp
+
+; --- 超导：传送到对方球的初始位置 ---
+SuperConduct proc bIdx:DWORD
+    .if bIdx == 1
+        mov eax, Ball2InitX
+        mov Ball1X, eax
+        mov eax, Ball2InitY
+        mov Ball1Y, eax
+    .else
+        mov eax, Ball1InitX
+        mov Ball2X, eax
+        mov eax, Ball1InitY
+        mov Ball2Y, eax
+    .endif
+    ret
+SuperConduct endp
+
+; --- 内部工具：安全扣除砖块血量 ---
+DamageBrick proc idx:DWORD
+    mov ecx, idx
+    .if byte ptr Bricks[ecx] > 0
+        dec byte ptr Bricks[ecx]
+    .endif
+    ret
+DamageBrick endp
+
+; --- 超载：附近砖块血量减1 ---
+Overloaded proc brickIdx:DWORD
+    local row:DWORD
+    local col:DWORD
+
+    ; 计算行列 (Index = Row * 3 + Col)
+    mov eax, brickIdx
+    xor edx, edx
+    mov ecx, 3
+    div ecx
+    mov row, eax
+    mov col, edx
+
+    ; 这里的逻辑是简单的：尝试减少周围 4 个方向的血量
+    ; 向上 (row-1)
+    .if row > 0
+        mov eax, brickIdx
+        sub eax, 3
+        invoke DamageBrick, eax
+    .endif
+    ; 向下 (row+1)
+    .if row < 4
+        mov eax, brickIdx
+        add eax, 3
+        invoke DamageBrick, eax
+    .endif
+    ; 向左 (col-1)
+    .if col > 0
+        mov eax, brickIdx
+        dec eax
+        invoke DamageBrick, eax
+    .endif
+    ; 向右 (col+1)
+    .if col < 2
+        mov eax, brickIdx
+        inc eax
+        invoke DamageBrick, eax
+    .endif
+    ret
+Overloaded endp
+
+
+; --- 反应核心：输入球索引(1/2), 砖块索引(0-14), 球颜色, 砖块颜色 ---
+TriggerReaction proc ballIdx:DWORD, brickIdx:DWORD, bColor:DWORD, tColor:DWORD
+    mov eax, bColor
+    .if eax == tColor
+        ; --- 属性相同：常规减血 ---
+        mov esi, offset Bricks
+        add esi, brickIdx
+        dec byte ptr [esi]
+        ret
+    .endif
+
+    ; --- 处理【风】元素 (扩散) ---
+    .if bColor == 2 || tColor == 2
+        invoke HandleSwirl, brickIdx, bColor, tColor
+        jmp DoneReaction
+    .endif
+
+    ; --- 处理其它组合 (水0, 火1, 雷3, 冰4) ---
+    ; 这里使用一种简便算法：将两个颜色编号排序后组合判断
+    mov eax, bColor
+    mov ebx, tColor
+    .if eax > ebx
+        xchg eax, ebx ; 确保 eax < ebx
+    .endif
+    ; 现在 eax 是较小的颜色号，ebx 是较大的
+
+    ; 水(1) + 火(0) -> [0, 1] 蒸发
+    .if eax == 0 && ebx == 1
+        mov esi, offset Bricks
+        add esi, brickIdx
+        mov byte ptr [esi], 0 ; 砖块消失
+        invoke ResetBallPos, ballIdx
+    
+    ; 水(1) + 冰(4) -> [1, 4] 冻结
+    .elseif eax == 1 && ebx == 4
+        invoke FreezeBall, ballIdx
+
+    ; 水(1) + 雷(3) -> [1, 3] 感电
+    .elseif eax == 1 && ebx == 3
+        invoke ElectroCharged
+
+    ; 火(0) + 冰(4) -> [0, 4] 融化
+    .elseif eax == 0 && ebx == 4
+        invoke MeltReaction
+
+    ; 火(0) + 雷(3) -> [0, 3] 超载
+    .elseif eax == 0 && ebx == 3
+        invoke Overloaded, brickIdx
+
+    ; 冰(4) + 雷(3) -> [3, 4] 超导
+    .elseif eax == 3 && ebx == 4
+        invoke SuperConduct, ballIdx
+    .endif
+
+DoneReaction:
+    ret
+TriggerReaction endp
 
 InitGameData proc
     mov esi, offset Bricks
@@ -242,38 +525,30 @@ UpdateGame proc hwnd:HWND
 
     invoke CheckKeyboard
 
-    ;两个球的常规位置更新
+    .if FreezeTimer1 > 0
+        dec FreezeTimer1
+        jmp SkipBall1Pos ; 跳过 Ball1 的判断
+    .endif
+
+    ;球1的常规位置更新
     mov eax, Ball1X
     add eax, Vel1X
     mov Ball1X, eax
     mov eax, Ball1Y
     add eax, Vel1Y
     mov Ball1Y, eax
-    mov eax, Ball2X
-    add eax, Vel2X
-    mov Ball2X, eax
-    mov eax, Ball2Y
-    add eax, Vel2Y
-    mov Ball2Y, eax
 
-    ; 边界反弹
+    ;球1上下反弹
     mov eax, WindowH
     sub eax, BallSize
     sub eax, BallSize
     .if sdword ptr Ball1Y < 0 || Ball1Y > eax
         neg Vel1Y
     .endif
-    .if sdword ptr Ball2Y < 0 || Ball2Y > eax
-        neg Vel2Y
-    .endif
 
-
-    ; 墙壁反弹
+    ; 球1墙壁反弹
     .if Ball1X > 680
         neg Vel1X
-    .endif
-    .if sdword ptr Ball2X < 0
-        neg Vel2X
     .endif
 
     ; P1挡板与自己球
@@ -293,6 +568,130 @@ UpdateGame proc hwnd:HWND
             invoke GetRandomIdx, 5
             mov Pad1Color, eax
         .endif
+    .endif
+
+    ;P2挡板与对方球
+    mov eax, Paddle2X
+    sub eax, BallSize
+    .if Ball1X > eax 
+        mov edx, Paddle2Y
+        mov ecx, edx
+        add ecx, PaddleH
+        .if Ball1Y >= sdword ptr edx && Ball1Y <= ecx
+            dec Life2
+            neg Vel1X
+            mov eax, Paddle2X
+            sub eax, BallSize
+            mov Ball1X, eax
+        .endif
+    .endif
+
+    ;球1出界判定 (失误)
+    .if sdword ptr Ball1X < 0
+        dec Life1
+        mov Ball1X, 100
+        mov Vel1X, 5
+    .endif
+
+    ; --- 砖块碰撞检测 (球1) ---
+    mov esi, offset Bricks
+    mov edi, 0
+    mov ebx, BrickOffY
+B1_Row:
+    cmp edi, BrickRows
+    jge SkipBall1Pos
+    mov ecx, 0
+    mov edx, BrickOffX
+B1_Col:
+    cmp ecx, BrickCols
+    jge B1_NextRow
+    cmp byte ptr [esi], 0
+    je B1_Skip
+    ; AABB
+    mov eax, Ball1X
+    add eax, BallSize
+    cmp eax, edx
+    jle B1_Skip
+    mov eax, edx
+    add eax, BrickW
+    cmp Ball1X, eax
+    jge B1_Skip
+    mov eax, Ball1Y
+    add eax, BallSize
+    cmp eax, ebx
+    jle B1_Skip
+    mov eax, ebx
+    add eax, BrickH
+    cmp Ball1Y, eax
+    jge B1_Skip
+
+    mov CurrentBrickRow, edi    ; 保存行索引 (寄存器 edi)
+    mov CurrentBrickCol, ecx    ; 保存列索引 (寄存器 ecx)
+
+    ;确认判断碰撞
+    mov eax, Ball1X
+    add eax, BallHalfSize
+
+    ; 2. 检查中心 X 是否在砖块的左右边界之间 [edx, edx + BrickW]
+    .if eax >= edx              ; 中心点在左边界右侧
+        push eax                
+        mov eax, edx
+        add eax, BrickW         ; 计算右边缘
+        pop ecx                 ; 将球中心点弹出到 ecx 进行比较
+        
+        .if ecx <= eax          ; 中心点在右边界左侧
+            ; --- 判定为：撞击了水平面 (顶边或底边) ---
+            neg Vel1Y           ; 反转垂直速度
+            jmp @f              ; 跳过 X 反转
+        .endif
+    .endif
+
+    neg Vel1X
+    @@:
+
+    invoke DamageAndEffect, CurrentBrickRow, CurrentBrickCol
+
+    jmp SkipBall1Pos
+B1_Skip:
+    inc esi
+    inc ecx
+    add edx, BrickW
+    add edx, BrickGap
+    jmp B1_Col
+B1_NextRow:
+    inc edi
+    add ebx, BrickH
+    add ebx, BrickGap
+    jmp B1_Row
+
+    SkipBall1Pos:
+
+    .if FreezeTimer2 > 0
+        dec FreezeTimer2
+        jmp SkipBall2Pos ; 跳过 Ball2 的判断
+    .endif
+
+    ;球2的常规位置更新
+    mov eax, Ball2X
+    add eax, Vel2X
+    mov Ball2X, eax
+    mov eax, Ball2Y
+    add eax, Vel2Y
+    mov Ball2Y, eax
+
+
+    ;球2上下反弹
+    mov eax, WindowH
+    sub eax, BallSize
+    sub eax, BallSize
+    .if sdword ptr Ball2Y < 0 || Ball2Y > eax
+        neg Vel2Y
+    .endif
+
+
+    ; 球2墙壁反弹
+    .if sdword ptr Ball2X < 0
+        neg Vel2X
     .endif
 
     ;P1挡板与对方球
@@ -330,89 +729,15 @@ UpdateGame proc hwnd:HWND
         .endif
     .endif
 
-    ;P2挡板与对方球
-    mov eax, Paddle2X
-    sub eax, BallSize
-    .if Ball1X > eax 
-        mov edx, Paddle1Y
-        mov ecx, edx
-        add ecx, PaddleH
-        .if Ball1Y >= sdword ptr edx && Ball1Y <= ecx
-            dec Life2
-            neg Vel1X
-            mov eax, Paddle2X
-            sub eax, BallSize
-            mov Ball1X, eax
-        .endif
-    .endif
 
-    ; 左右出界判定 (失误)
-    .if sdword ptr Ball1X < 0
-        dec Life1
-        mov Ball1X, 100
-        mov Vel1X, 5
-    .endif
+    ;球2出界判定 (失误)
     .if Ball2X > 680
         dec Life2
         mov Ball2X, 580
         mov Vel2X, -5
     .endif
 
-    ; --- 砖块碰撞检测 (球1) ---
-    mov esi, offset Bricks
-    mov edi, 0
-    mov ebx, BrickOffY
-B1_Row:
-    cmp edi, BrickRows
-    jge B2_Check
-    mov ecx, 0
-    mov edx, BrickOffX
-B1_Col:
-    cmp ecx, BrickCols
-    jge B1_NextRow
-    cmp byte ptr [esi], 0
-    je B1_Skip
-    ; AABB
-    mov eax, Ball1X
-    add eax, BallSize
-    cmp eax, edx
-    jle B1_Skip
-    mov eax, edx
-    add eax, BrickW
-    cmp Ball1X, eax
-    jge B1_Skip
-    mov eax, Ball1Y
-    add eax, BallSize
-    cmp eax, ebx
-    jle B1_Skip
-    mov eax, ebx
-    add eax, BrickH
-    cmp Ball1Y, eax
-    jge B1_Skip
-    dec byte ptr [esi]
 
-    ; --- 新增：触发特效 ---
-    push edx    ; edx 是当前砖块的 X
-    push ebx    ; ebx 是当前砖块的 Y
-    invoke SpawnEffect, edx, ebx
-    pop ebx
-    pop edx
-
-    neg Vel1X
-    jmp B2_Check 
-B1_Skip:
-    inc esi
-    inc ecx
-    add edx, BrickW
-    add edx, BrickGap
-    jmp B1_Col
-B1_NextRow:
-    inc edi
-    add ebx, BrickH
-    add ebx, BrickGap
-    jmp B1_Row
-
-B2_Check:
     ; --- 砖块碰撞检测 (球2) ---
     mov esi, offset Bricks
     mov edi, 0
@@ -447,17 +772,36 @@ B2_Col:
     add eax, BrickH
     cmp Ball2Y, eax
     jge B2_Skip
+
+    mov CurrentBrickRow, edi    ; 保存行索引 (寄存器 edi)
+    mov CurrentBrickCol, ecx    ; 保存列索引 (寄存器 ecx)
+
+    ;确认判断碰撞
+    mov eax, Ball2X
+    add eax, BallHalfSize
+
+    ; 2. 检查中心 X 是否在砖块的左右边界之间 [edx, edx + BrickW]
+    .if eax >= edx              ; 中心点在左边界右侧
+        push eax                
+        mov eax, edx
+        add eax, BrickW         ; 计算右边缘
+        pop ecx                 ; 将球中心点弹出到 ecx 进行比较
+        
+        .if ecx <= eax          ; 中心点在右边界左侧
+            ; --- 判定为：撞击了水平面 (顶边或底边) ---
+            neg Vel2Y           ; 反转垂直速度
+            jmp @f              ; 跳过 X 反转
+        .endif
+    .endif
+
+
+    neg Vel2X
+    @@:
     
     dec byte ptr [esi]
 
-    ; --- 新增：触发特效 ---
-    push edx    ; edx 是当前砖块的 X
-    push ebx    ; ebx 是当前砖块的 Y
-    invoke SpawnEffect, edx, ebx
-    pop ebx
-    pop edx
+    invoke DamageAndEffect, CurrentBrickRow, CurrentBrickCol
 
-    neg Vel2X
     jmp UpdateDone
 B2_Skip:
     inc esi
@@ -470,6 +814,8 @@ B2_NextRow:
     add ebx, BrickH
     add ebx, BrickGap
     jmp B2_Row
+
+SkipBall2Pos:
 
 UpdateDone:
 
@@ -598,71 +944,71 @@ PaintGame proc hdc:HDC, lprect:PTR RECT
     mov edi, 0
     mov eax, BrickOffY
     mov currentY, eax
-PaintRow:
-    cmp edi, BrickRows
-    jge PaintEnd
-    mov ecx, 0
-    mov eax, BrickOffX
-    mov currentX, eax
-PaintCol:
-    cmp ecx, BrickCols
-    jge PaintNextRow
-    cmp byte ptr [esi], 0
-    je SkipDraw
-    push ecx
-    push edi
-    push esi
-    mov esi, pColorArr
-    xor eax, eax
-    mov al, byte ptr [esi]
-    invoke SelectObject, memDC, hColorBrushes[eax*4]
-    pop esi
-    pop edi
-    pop ecx
-    mov eax, currentX
-    add eax, BrickW
-    mov ebx, currentY
-    add ebx, BrickH
-    push ecx
-    invoke Rectangle, memDC, currentX, currentY, eax, ebx
-    mov eax, currentX
-    mov rectBrick.left, eax
+    PaintRow:
+        cmp edi, BrickRows
+        jge PaintEnd
+        mov ecx, 0
+        mov eax, BrickOffX
+        mov currentX, eax
+    PaintCol:
+        cmp ecx, BrickCols
+        jge PaintNextRow
+        cmp byte ptr [esi], 0
+        je SkipDraw
+        push ecx
+        push edi
+        push esi
+        mov esi, pColorArr
+        xor eax, eax
+        mov al, byte ptr [esi]
+        invoke SelectObject, memDC, hColorBrushes[eax*4]
+        pop esi
+        pop edi
+        pop ecx
+        mov eax, currentX
+        add eax, BrickW
+        mov ebx, currentY
+        add ebx, BrickH
+        push ecx
+        invoke Rectangle, memDC, currentX, currentY, eax, ebx
+        mov eax, currentX
+        mov rectBrick.left, eax
 
-    mov eax, currentX
-    add eax, BrickW
-    mov rectBrick.right, eax
+        mov eax, currentX
+        add eax, BrickW
+        mov rectBrick.right, eax
 
-    mov eax, currentY
-    mov rectBrick.top, eax
+        mov eax, currentY
+        mov rectBrick.top, eax
 
-    mov eax, currentY
-    add eax, BrickH
-    mov rectBrick.bottom, eax
-    xor eax, eax
-    mov al, byte ptr [esi]
-    add al, '0'
-    mov szNumBuffer[0], al
-    mov szNumBuffer[1], 0
-    invoke DrawText, memDC, addr szNumBuffer, -1, addr rectBrick, DT_CENTER or DT_VCENTER or DT_SINGLELINE
-    pop ecx
-SkipDraw:
-    inc esi
-    inc pColorArr
-    mov eax, currentX
-    add eax, BrickW
-    add eax, BrickGap
-    mov currentX, eax
-    inc ecx
-    jmp PaintCol
-PaintNextRow:
-    inc edi
-    mov eax, currentY
-    add eax, BrickH
-    add eax, BrickGap
-    mov currentY, eax
-    jmp PaintRow
+        mov eax, currentY
+        add eax, BrickH
+        mov rectBrick.bottom, eax
+        xor eax, eax
+        mov al, byte ptr [esi]
+        add al, '0'
+        mov szNumBuffer[0], al
+        mov szNumBuffer[1], 0
+        invoke DrawText, memDC, addr szNumBuffer, -1, addr rectBrick, DT_CENTER or DT_VCENTER or DT_SINGLELINE
+        pop ecx
+    SkipDraw:
+        inc esi
+        inc pColorArr
+        mov eax, currentX
+        add eax, BrickW
+        add eax, BrickGap
+        mov currentX, eax
+        inc ecx
+        jmp PaintCol
+    PaintNextRow:
+        inc edi
+        mov eax, currentY
+        add eax, BrickH
+        add eax, BrickGap
+        mov currentY, eax
+        jmp PaintRow
 
-PaintEnd:
+    PaintEnd:
 
     ; --- 绘制飘字特效 ---
     invoke SetBkMode, memDC, TRANSPARENT ; 确保文字背景不会遮挡砖块
@@ -670,6 +1016,11 @@ PaintEnd:
     mov edi, 0
 DrawEffLoop:
     .if EffectActive[edi] != 0
+
+        ;设置当前特效专属的文字颜色
+        mov eax, EffectColors[edi*4]
+        invoke SetTextColor, memDC, eax
+    
         mov eax, EffectX[edi*4]
         mov rectEff.left, eax
         add eax, 40
@@ -678,8 +1029,11 @@ DrawEffLoop:
         mov rectEff.top, eax
         add eax, 20
         mov rectEff.bottom, eax
+
+        ; 3. 使用保存在数组中的字符串指针进行绘制
+        mov edx, EffectStrings[edi*4]
+        invoke DrawText, memDC, edx, -1, addr rectEff, DT_CENTER
         
-        invoke DrawText, memDC, addr TxtMinusOne, -1, addr rectEff, DT_CENTER
     .endif
     inc edi
     cmp edi, MAX_EFFECTS

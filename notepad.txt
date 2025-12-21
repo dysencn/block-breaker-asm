@@ -1,36 +1,42 @@
+jge B1_Skip
 
-    ; P1挡板与自己球
-    mov eax, Paddle1X
-    add eax, PaddleW
-    .if Ball1X < eax
-        mov edx, Paddle1Y
-        mov ecx, edx
-        add ecx, PaddleH
-        .if Ball1Y >= sdword ptr edx && Ball1Y <= ecx
-            neg Vel1X
-            mov eax, Paddle1X
-            mov Ball1X, eax
-            mov ecx, Pad1Color
-            mov Ball1Color, ecx
-            push eax
-            invoke GetRandomIdx, 5
-            mov Pad1Color, eax
-            pop eax
+    mov CurrentBrickRow, edi    ; 保存行索引 (寄存器 edi)
+    mov CurrentBrickCol, ecx    ; 保存列索引 (寄存器 ecx)
+
+    ;确认判断碰撞
+    mov eax, Ball1X
+    add eax, BallHalfSize
+
+    ; 2. 检查中心 X 是否在砖块的左右边界之间 [edx, edx + BrickW]
+    .if eax >= edx              ; 中心点在左边界右侧
+        push eax                
+        mov eax, edx
+        add eax, BrickW         ; 计算右边缘
+        pop ecx                 ; 将球中心点弹出到 ecx 进行比较
+        
+        .if ecx <= eax          ; 中心点在右边界左侧
+            ; --- 判定为：撞击了水平面 (顶边或底边) ---
+            neg Vel1Y           ; 反转垂直速度
+            jmp @f              ; 跳过 X 反转
         .endif
     .endif
 
-    ;P1挡板与对方球
-    mov eax, Paddle1X
-    add eax, PaddleW
-    .if Ball2X < eax
-        mov edx, Paddle1Y
-        mov ecx, edx
-        add ecx, PaddleH
-        .if Ball2Y >= edx && Ball2Y <= ecx
-            dec Life1
-            neg Vel2X
-            mov eax, Paddle1X
-            add eax, PaddleW
-            mov Ball2X, eax
-        .endif
-    .endif
+    neg Vel1X
+    @@:
+
+    dec byte ptr [esi]
+    
+    ; --- 新增：触发特效 ---
+    push edx    ; edx 是当前砖块的 X
+    push ebx    ; ebx 是当前砖块的 Y
+    invoke SpawnEffect, edx, ebx, addr TxtMinusOne, ColorYellow
+    pop ebx
+    pop edx
+
+    jmp SkipBall1Pos
+B1_Skip:
+    inc esi
+    inc ecx
+    add edx, BrickW
+    add edx, BrickGap
+    jmp B1_Col
