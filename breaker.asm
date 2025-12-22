@@ -793,7 +793,7 @@ UpdateGame proc hwnd:HWND
     .endif
 
 
-    .if Ball2X > 680
+    .if sdword ptr Ball2X > 680
         invoke DecreaseLifeWithEffect, 2
         mov Ball2X, 580
         mov Vel2X, -5

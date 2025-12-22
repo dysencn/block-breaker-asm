@@ -898,7 +898,7 @@ UpdateGame proc hwnd:HWND
 
 
     ;球2出界判定 (失误)
-    .if Ball2X > 680
+    .if sdword ptr Ball2X > 680
         invoke DecreaseLifeWithEffect, 2
         mov Ball2X, 580
         mov Vel2X, -5
