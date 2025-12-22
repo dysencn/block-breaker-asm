@@ -14,7 +14,8 @@ A block-breaker game developed with Assembly(MASM32)
 
 横屏打砖块游戏，中间生成3行5列的砖块，两侧为可上下移动的挡板。每个玩家各自有一个球。
 
-左侧玩家：AD键控制。右侧玩家：上下方向键控制。
+Player 1: W/S Key
+Player 2: Up/Down Key
 
 ### 血量机制
 
