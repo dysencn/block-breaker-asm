@@ -91,7 +91,7 @@ includelib \masm32\lib\masm32.lib
 
     ; --- 颜色系统配置 ---
     ColorValues dd 000000FFh ; 0 红色
-                dd 00800000h ; 1 深蓝色
+                dd 00C00000h ; 1 深蓝色
                 dd 00999900h ; 2 蓝绿
                 dd 00800080h ; 3 紫色
                 dd 00E6D8ADh ; 4 浅蓝色
@@ -1241,7 +1241,7 @@ WndProc proc hwnd:HWND, uMsg:UINT, wParam:WPARAM, lParam:LPARAM
         mov RandSeed, eax
         invoke InitGameData
 
-        invoke CreateFont, 32, 0, 0, 0, FW_BOLD, \
+        invoke CreateFont, 40, 0, 0, 0, FW_BOLD, \
                            0, 0, 0, DEFAULT_CHARSET, \
                            0, 0, 0, 0, NULL
         mov hFontEffect, eax

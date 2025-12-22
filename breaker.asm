@@ -82,7 +82,7 @@ includelib \masm32\lib\masm32.lib
     FreezeTimer2 dd 0 
 
     ColorValues dd 000000FFh
-                dd 00800000h
+                dd 00C00000h
                 dd 00999900h
                 dd 00800080h
                 dd 00E6D8ADh
@@ -1115,7 +1115,7 @@ WndProc proc hwnd:HWND, uMsg:UINT, wParam:WPARAM, lParam:LPARAM
         mov RandSeed, eax
         invoke InitGameData
 
-        invoke CreateFont, 32, 0, 0, 0, FW_BOLD, \
+        invoke CreateFont, 40, 0, 0, 0, FW_BOLD, \
                            0, 0, 0, DEFAULT_CHARSET, \
                            0, 0, 0, 0, NULL
         mov hFontEffect, eax
