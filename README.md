@@ -1,5 +1,11 @@
-# block-breaker-asm
-A block-breaker game developed with Assembly code
+# Block Breaker MASM32 汇编语言打砖块游戏
+A block-breaker game developed with Assembly(MASM32)
+
+基于MASM32汇编开发的打砖块游戏
+
+北京理工大学 2023 级大三汇编语言与接口大作业
+
+###
 
 ### 关于
 北京理工大学汇编语言与接口设计大作业：打砖块
