@@ -91,7 +91,7 @@ includelib \masm32\lib\masm32.lib
 
     ; --- 颜色系统配置 ---
     ColorValues dd 000000FFh ; 0 红色
-                dd 00C00000h ; 1 深蓝色
+                dd 00FF8000h  ; 1 深蓝色
                 dd 00999900h ; 2 蓝绿
                 dd 00800080h ; 3 紫色
                 dd 00E6D8ADh ; 4 浅蓝色
