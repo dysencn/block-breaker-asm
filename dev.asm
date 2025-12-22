@@ -135,6 +135,7 @@ includelib \masm32\lib\masm32.lib
     TxtMelt            db "融化", 0
     TxtOverloaded      db "超载", 0
     TxtSuperConduct    db "超导", 0
+    TxtImmune          db "免疫", 0
 
     msgBuf db 64 dup(0)
 
@@ -484,16 +485,17 @@ TriggerReaction proc ballIdx:DWORD
     mov eax, ColorValues[eax*4]
     mov realBallColor, eax
 
-    ; --- 5. 固定行为：先扣血并飘字 ---
-    ; 无论什么属性，先调用这个通用扣血函数
-    invoke DamageAndEffect, row, col
-
-    ; --- 6. 属性相同判定 ---
+    ; --- 5. 属性相同判定 ---
     mov eax, bColor
     .if eax == tColor
-        ; 属性相同：无任何额外行为 (前面已经扣过血了)
+        ; 属性相同：无任何行为
+        invoke SpawnEffect, ballX, ballY, addr TxtImmune, realBallColor
         jmp DoneReaction
     .endif
+
+    ; --- 6. 固定行为：先扣血并飘字 ---
+    ; 无论什么属性，先调用这个通用扣血函数
+    invoke DamageAndEffect, row, col
 
     ; --- 7. 处理【风】元素 (扩散) ---
     .if bColor == 2 || tColor == 2
