@@ -3,17 +3,15 @@ A block-breaker game developed with Assembly(MASM32)
 
 基于MASM32汇编开发的打砖块游戏
 
-北京理工大学 2023 级大三汇编语言与接口大作业
-
 ### About 关于
 北京理工大学汇编语言与接口设计大作业：打砖块
 
 ### How to Play 基本玩法
 
-
 横屏打砖块游戏，中间生成3行5列的砖块，两侧为可上下移动的挡板。每个玩家各自有一个球。
 
 Player 1: W/S Key
+
 Player 2: Up/Down Key
 
 ### 血量机制
@@ -57,12 +55,13 @@ Player 2: Up/Down Key
 
 一个球和一个砖块碰撞时：
 
-固定血量减一。
 
 若属性相同：无任何行为。
 
 
 属性不同：
+
+固定血量减一。
 
 若一方为风，发生扩散反应：若球是风元素，把碰撞砖块邻近砖块的属性染成和碰撞砖块相同颜色；若砖块是风元素，把砖块邻近砖块的属性染成和球相同的颜色。
 
@@ -74,13 +73,13 @@ Player 2: Up/Down Key
 
 水+冰：冻结。球停在碰撞的地方2秒钟不动，然后正常反弹。
 
-水+雷：感电。场上所有水元素的方块血量-1。
+水+雷：感电。场上所有水元素方块血量-1。
 
 火+冰：融化。场上所有冰元素方块变为水元素。
 
 火+雷：超载。附近的砖块血量也-1。
 
-### How to Compile This Program
+### Howto Compile This Program
 
 #### Make sure you have MASM32 Environment
 cmd:
