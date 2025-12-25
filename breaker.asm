@@ -16,6 +16,7 @@ includelib \masm32\lib\masm32.lib
 .data
     AppName     db "Breakout",0
     ClassName   db "BreakoutClass",0
+    FontName    db "Microsoft YaHei", 0
     
     WindowW     dd 710
     WindowH     dd 640
@@ -1119,7 +1120,7 @@ WndProc proc hwnd:HWND, uMsg:UINT, wParam:WPARAM, lParam:LPARAM
 
         invoke CreateFont, 40, 0, 0, 0, FW_BOLD, \
                            0, 0, 0, DEFAULT_CHARSET, \
-                           0, 0, 0, 0, NULL
+                           0, 0, 0, 0, offset FontName
         mov hFontEffect, eax
 
         invoke ShowWindow, hwnd, SW_SHOWNORMAL 
