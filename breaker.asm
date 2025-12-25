@@ -205,7 +205,6 @@ DamageAndEffect proc row:DWORD, col:DWORD
     add eax, BrickOffX
     mov CalcBrickX, eax
 
-    ; Y = BrickOffY + row * (BrickH + BrickGap)
     mov eax, row
     mov ecx, BrickH
     add ecx, BrickGap
@@ -624,7 +623,7 @@ UpdateGame proc hwnd:HWND
         neg Vel1Y
     .endif
 
-    .if Ball1X > 680
+    .if sdword ptr Ball1X > 680
         neg Vel1X
     .endif
 
@@ -646,10 +645,9 @@ UpdateGame proc hwnd:HWND
         .endif
     .endif
 
-    ;P2挡板与对方球
     mov eax, Paddle2X
     sub eax, BallSize
-    .if Ball1X > eax 
+    .if sdword ptr Ball1X > eax 
         mov edx, Paddle2Y
         mov ecx, edx
         add ecx, PaddleH
@@ -712,12 +710,18 @@ UpdateGame proc hwnd:HWND
         pop ecx 
         
         .if ecx <= eax 
-            neg Vel1Y 
+            neg Vel1Y
+            mov eax, Ball1Y
+            add eax, Vel1Y
+            mov Ball1Y, eax
             jmp @f
         .endif
     .endif
 
     neg Vel1X
+    mov eax, Ball1X
+    add eax, Vel1X
+    mov Ball1X, eax
     @@:
 
     invoke TriggerReaction, 1
@@ -749,14 +753,12 @@ UpdateGame proc hwnd:HWND
     add eax, Vel2Y
     mov Ball2Y, eax
 
-
     mov eax, WindowH
     sub eax, BallSize
     sub eax, BallSize
     .if sdword ptr Ball2Y < 0 || Ball2Y > eax
         neg Vel2Y
     .endif
-
 
     .if sdword ptr Ball2X < 0
         neg Vel2X
@@ -848,12 +850,18 @@ UpdateGame proc hwnd:HWND
         
         .if ecx <= eax
             neg Vel2Y
+            mov eax, Ball2Y
+            add eax, Vel2Y
+            mov Ball2Y, eax
             jmp @f
         .endif
     .endif
 
 
     neg Vel2X
+    mov eax, Ball2X
+    add eax, Vel2X
+    mov Ball2X, eax
     @@:
 
     invoke TriggerReaction, 2

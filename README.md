@@ -5,12 +5,11 @@ A block-breaker game developed with Assembly(MASM32)
 
 北京理工大学 2023 级大三汇编语言与接口大作业
 
-###
-
-### 关于
+### About 关于
 北京理工大学汇编语言与接口设计大作业：打砖块
 
-### 基本玩法
+### How to Play 基本玩法
+
 
 横屏打砖块游戏，中间生成3行5列的砖块，两侧为可上下移动的挡板。每个玩家各自有一个球。
 
@@ -80,3 +79,39 @@ Player 2: Up/Down Key
 火+冰：融化。场上所有冰元素方块变为水元素。
 
 火+雷：超载。附近的砖块血量也-1。
+
+### How to Compile This Program
+
+#### Make sure you have MASM32 Environment
+cmd:
+
+    C:\Users\dysen\Desktop\block-breaker-asm>ml
+    Microsoft (R) Macro Assembler Version 6.14.8444
+    Copyright (C) Microsoft Corp 1981-1997.  All rights reserved.
+
+    usage: ML [ options ] filelist [ /link linkoptions]
+    Run "ML /help" or "ML /?" for more info
+
+#### Then Run:
+
+    ml /c /coff breaker.asm
+    link /subsystem:windows breaker.obj
+
+your result should be like this in Windows cmd:
+
+    C:\Users\dysen\Desktop\block-breaker-asm>ml /c /coff breaker.asm
+    Microsoft (R) Macro Assembler Version 6.14.8444
+    Copyright (C) Microsoft Corp 1981-1997.  All rights reserved.
+
+    Assembling: breaker.asm
+
+    ***********
+    ASCII build
+    ***********
+
+
+    C:\Users\dysen\Desktop\block-breaker-asm>link /subsystem:windows breaker.obj
+    Microsoft (R) Incremental Linker Version 5.12.8078
+    Copyright (C) Microsoft Corp 1992-1998. All rights reserved.
+
+of course, if your Windows system is GBK instead of utf-8 for Chinese, make sure the .asm file is GBK too.

@@ -717,7 +717,7 @@ UpdateGame proc hwnd:HWND
     .endif
 
     ; 球1墙壁反弹
-    .if sdword ptr Ball1X > 680
+    .if Ball1X > 680
         neg Vel1X
     .endif
 
@@ -743,7 +743,7 @@ UpdateGame proc hwnd:HWND
     ;P2挡板与对方球
     mov eax, Paddle2X
     sub eax, BallSize
-    .if sdword ptr Ball1X > eax 
+    .if Ball1X > eax 
         mov edx, Paddle2Y
         mov ecx, edx
         add ecx, PaddleH
